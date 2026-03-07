@@ -1,2 +1,2 @@
-# uncover
-Benchmarking version identification models with a unified evaluation pipeline
+# UnCover
+Unified evaluation pipeline for version identification models
