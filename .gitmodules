@@ -1,0 +1,6 @@
+[submodule "models/Discogs-VINet"]
+	path = models/Discogs-VINet
+	url = git@github.com:raraz15/Discogs-VINet.git
+[submodule "models/clews"]
+	path = models/clews
+	url = https://github.com/sony/clews.git
