@@ -1,0 +1,3 @@
+[submodule "eval/synesis"]
+	path = eval/synesis
+	url = https://github.com/arjunbahuguna/synesis
