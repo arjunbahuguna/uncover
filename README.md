@@ -1,6 +1,34 @@
 # UnCover
 Unified evaluation pipeline for version identification models
 
+## CLEWS Inference
+
+The `clews` service runs the code from `models/clews` inside Docker.
+
+Build the image:
+
+```bash
+make build-clews
+```
+
+Open a shell in the container:
+
+```bash
+make bash-clews
+```
+
+Run inference (inside the container) with a checkpoint and a single input file:
+
+```bash
+python inference.py --checkpoint=checkpoints/clews/dvi-clews/checkpoint_best.ckpt --fn_in=inputs/my_video.wav --fn_out=output/filename.pt --device=cpu
+```
+
+Notes:
+
+- Use `.wav` input files for the most reliable decoding in this setup.
+- Paths are relative to `/app` inside the container (`models/clews` on the host).
+- The output embedding is saved as a `.pt` file at the path given by `--fn_out`.
+
 ## Discogs-VINet Inference
 
 The `discogs-vinet` service runs the code from `models/Discogs-VINet` inside Docker.
