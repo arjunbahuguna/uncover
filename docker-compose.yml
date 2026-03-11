@@ -4,6 +4,8 @@ services:
       context: .
       dockerfile: models/clews.Dockerfile
     container_name: clews-model
+    environment:
+      OMP_NUM_THREADS: "1"
     working_dir: /app
     volumes:
       - ./models/clews:/app
@@ -19,6 +21,7 @@ services:
     environment:
       PYTHONDONTWRITEBYTECODE: "1"
       PYTHONUNBUFFERED: "1"
+      OMP_NUM_THREADS: "1"
     working_dir: /app
     volumes:
       - ./models/Discogs-VINet:/app
