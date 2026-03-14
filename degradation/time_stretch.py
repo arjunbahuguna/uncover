@@ -1,53 +1,52 @@
-import os
-import subprocess
+import argparse
+
+import numpy as np
 import librosa
 import soundfile as sf
 
 
-class TimeStretchTool:
-    def __init__(self, rb_path="rubberband.exe"):
-        # Path to rubberband executable
-        self.rb_path = rb_path
-        self.has_rb = os.path.exists(rb_path)
-        if not self.has_rb:
-            print(f"Warning: Executable not found at {rb_path}. High-quality mode disabled.")
+def _write_audio(path, y, sr):
+    sf.write(path, y.T if y.ndim > 1 else y, sr)
 
-    def process(self, input_path, output_path, stretch_rate=1.0, quality='high'):
+
+class TimeStretchTool:
+    def __init__(self):
+        pass
+
+    def process(self, input_path, output_path, stretch_rate=1.0):
         # input_path: Source audio file
         # output_path: Destination audio file
         # stretch_rate: Speed factor (>1 faster, <1 slower)
-        # quality: 'high' (Rubber Band) or 'low' (Librosa)
 
         if stretch_rate == 1.0:
-            # Copy file without processing
-            y, sr = librosa.load(input_path, sr=None)
-            sf.write(output_path, y, sr)
+            y, sr = librosa.load(input_path, sr=None, mono=False)
+            _write_audio(output_path, y, sr)
             print(f"Skipped (rate=1.0) -> {output_path}")
             return
 
-        if quality == 'high' and self.has_rb:
-            # High-quality mode (Rubber Band)
-            # time_ratio = 1.0 / stretch_rate
-            time_ratio = 1.0 / stretch_rate
-            cmd = [self.rb_path, "-t", str(time_ratio), input_path, output_path]
+        y, sr = librosa.load(input_path, sr=None, mono=False)
 
-            print(f"[High Quality] Stretching: {stretch_rate}x")
-            subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL)
+        print(f"Time Stretching: {stretch_rate}x")
+        if y.ndim > 1:
+            channels = [librosa.effects.time_stretch(y[c], rate=stretch_rate, n_fft=4096) for c in range(y.shape[0])]
+            y_stretched = np.stack(channels, axis=0)
         else:
-            # Low-quality mode (Librosa Phase Vocoder)
-            print(f"[Low Quality] Stretching: {stretch_rate}x")
-            y, sr = librosa.load(input_path, sr=None)
-            y_stretched = librosa.effects.time_stretch(y, rate=stretch_rate)
-            sf.write(output_path, y_stretched, sr)
+            y_stretched = librosa.effects.time_stretch(y, rate=stretch_rate, n_fft=4096)
 
+        _write_audio(output_path, y_stretched, sr)
         print(f"Completed -> {output_path}")
 
 
+def build_parser():
+    parser = argparse.ArgumentParser(description="Apply time stretch to an audio file.")
+    parser.add_argument("--input", required=True, help="Path to input audio file")
+    parser.add_argument("--output", "--output-path", dest="output", required=True, help="Path to output audio file")
+    parser.add_argument("--stretch-rate", type=float, default=1.0, help="Stretch factor (>1 faster, <1 slower)")
+    return parser
+
+
 if __name__ == "__main__":
-    ts_tool = TimeStretchTool(rb_path="rubberband.exe")
+    args = build_parser().parse_args()
 
-    # High-quality 1.2x speedup
-    ts_tool.process(r"Z:\CloudMusic\Enchanted (Taylor's Version).mp3", "fast_high.wav", stretch_rate=1.8, quality='high')
-
-    # Low-quality 0.8x slowdown
-    ts_tool.process(r"Z:\CloudMusic\Enchanted (Taylor's Version).mp3", "fast_low.wav", stretch_rate=1.8, quality='low')
+    ts_tool = TimeStretchTool()
+    ts_tool.process(args.input, args.output, stretch_rate=args.stretch_rate)

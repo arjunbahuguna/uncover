@@ -1,4 +1,4 @@
-import os
+import argparse
 import random
 import librosa
 import soundfile as sf
@@ -59,7 +59,26 @@ def apply_reverb_advanced(input_path, output_path, mode='algo', ir_path=None, we
     return selected_ir if mode == 'ir' else "algorithmic"
 
 
+def build_parser():
+    parser = argparse.ArgumentParser(description="Apply reverb to an audio file.")
+    parser.add_argument("--input", required=True, help="Path to input audio file")
+    parser.add_argument("--output", "--output-path", dest="output", required=True, help="Path to output audio file")
+    parser.add_argument("--mode", choices=["algo", "ir"], default="algo", help="Reverb mode")
+    parser.add_argument("--ir-path", help="IR file or directory path (required when --mode ir)")
+    parser.add_argument("--wet-level", type=float, default=0.3, help="Wet mix amount between 0.0 and 1.0")
+    return parser
+
+
 if __name__ == "__main__":
-    # Example usage (uncomment to run):
-    apply_reverb_advanced(r"Z:\CloudMusic\Enchanted (Taylor's Version).mp3", "out_algo.wav", mode='algo', wet_level=0.8)
-    apply_reverb_advanced(r"Z:\CloudMusic\Enchanted (Taylor's Version).mp3", "out_ir.wav", mode='ir', ir_path="IRlib", wet_level=0.8)
+    args = build_parser().parse_args()
+
+    if args.mode == "ir" and not args.ir_path:
+        raise ValueError("--ir-path is required when --mode ir")
+
+    apply_reverb_advanced(
+        args.input,
+        args.output,
+        mode=args.mode,
+        ir_path=args.ir_path,
+        wet_level=args.wet_level,
+    )

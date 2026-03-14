@@ -59,3 +59,18 @@ Notes:
 - `inputs` is a directory, not a single file path. For a single track, place that track alone in the directory.
 - `outputs` will contain `.npy` embedding files with the same relative structure as the input tree.
 - If your source audio is not `.wav`, convert it first.
+
+## Audio Degradations (CLI)
+
+Run from the repo root:
+
+```bash
+python degradation/pitch_shift.py --input in.wav --output out_pitch.wav --n-steps 2
+python degradation/time_stretch.py --input in.wav --output out_stretch.wav --stretch-rate 1.2
+python degradation/reverb.py --input in.wav --output out_reverb.wav --mode algo --wet-level 0.4
+python degradation/reverb.py --input in.wav --output out_reverb_ir.wav --mode ir --ir-path path/to/ir_or_ir_folder --wet-level 0.4
+```
+
+Notes:
+
+- `--input` and `--output` are required for all degradation scripts.
