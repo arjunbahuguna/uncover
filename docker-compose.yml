@@ -9,6 +9,8 @@ services:
     working_dir: /app
     volumes:
       - ./models/clews:/app
+      - ./extractor:/app/extractor
+      - "/Volumes/T7 Shield/discogs/:/data/discogs"
     tty: true
     stdin_open: true
 
@@ -25,5 +27,7 @@ services:
     working_dir: /app
     volumes:
       - ./models/Discogs-VINet:/app
+      - ./extractor:/app/extractor
+      - "/Volumes/T7 Shield/discogs/:/data/discogs"
     tty: true
     stdin_open: true
