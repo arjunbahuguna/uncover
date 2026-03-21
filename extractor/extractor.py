@@ -31,20 +31,42 @@ def extract_embeddings_clews(file_paths: list, output_path: Path) -> None:
     # Process each file individually
     for file_path in file_paths:
         output_file = output_path / f"{file_path.stem}.pt"
-        cmd = [
-            "python",
-            "inference.py",
-            "--checkpoint=checkpoints/clews/dvi-clews/checkpoint_best.ckpt",
-            f"--fn_in={str(file_path)}",
-            f"--fn_out={str(output_file)}",
-        ]
 
-        logger.info(f"Processing {file_path} -> {output_file}")
-        result = subprocess.run(cmd, cwd="/app", capture_output=True, text=True)
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_dir_path = Path(tmp_dir)
+            temp_wav_path = tmp_dir_path / f"{file_path.stem}.wav"
 
-        if result.returncode != 0:
-            logger.error(f"CLEWS inference failed for {file_path}: {result.stderr}")
-            sys.exit(1)
+            ffmpeg_cmd = [
+                "ffmpeg",
+                "-y",
+                "-i",
+                str(file_path),
+                str(temp_wav_path),
+            ]
+            ffmpeg_result = subprocess.run(
+                ffmpeg_cmd, cwd="/app", capture_output=True, text=True
+            )
+            if ffmpeg_result.returncode != 0:
+                logger.error(
+                    f"Failed to convert {file_path} to temporary wav: {ffmpeg_result.stderr}"
+                )
+                sys.exit(1)
+
+            cmd = [
+                "python",
+                "inference.py",
+                "--checkpoint=checkpoints/clews/dvi-clews/checkpoint_best.ckpt",
+                f"--fn_in={str(temp_wav_path)}",
+                f"--fn_out={str(output_file)}",
+                "--device=cpu",
+            ]
+
+            logger.info(f"Processing {file_path} -> {output_file}")
+            result = subprocess.run(cmd, cwd="/app", capture_output=True, text=True)
+
+            if result.returncode != 0:
+                logger.error(f"CLEWS inference failed for {file_path}: {result.stderr}")
+                sys.exit(1)
 
         logger.info(f"Successfully extracted embedding for {file_path}")
 
@@ -120,7 +142,6 @@ def extract_embeddings_discogs_vinet(
                         f"Discogs-VINet inference failed for {file_path}: {result.stderr}"
                     )
                     sys.exit(1)
-                print(result.stdout)
 
                 logger.info(f"Successfully extracted embedding for {file_path}")
         finally:
