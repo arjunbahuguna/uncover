@@ -32,6 +32,10 @@ def extract_embeddings_clews(file_paths: list, output_path: Path) -> None:
     for file_path in file_paths:
         output_file = output_path / f"{file_path.stem}.pt"
 
+        if output_file.exists():
+            logger.info(f"Skipping {file_path}: output already exists at {output_file}")
+            continue
+
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_dir_path = Path(tmp_dir)
             temp_wav_path = tmp_dir_path / f"{file_path.stem}.wav"
@@ -92,6 +96,11 @@ def extract_embeddings_discogs_vinet(
     # Process each file individually
     for file_path in file_paths:
         output_file = output_path / f"{file_path.stem}.npy"
+
+        if output_file.exists():
+            logger.info(f"Skipping {file_path}: output already exists at {output_file}")
+            continue
+
         temp_wav_path = None
 
         try:
