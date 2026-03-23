@@ -26,8 +26,7 @@ services:
       OMP_NUM_THREADS: "1"
     working_dir: /app
     volumes:
-      - ./retrieval:/app/retrieval
-      - ./extractor:/app/extractor
+      - .:/app
       - "/Volumes/T7 Shield/discogs/:/data/discogs"
     tty: true
     stdin_open: true
