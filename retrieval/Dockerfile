@@ -6,10 +6,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-COPY retrival/requirements.txt /tmp/requirements.txt
+COPY retrieval/requirements.txt /tmp/requirements.txt
 RUN pip install --upgrade pip && \
     pip install -r /tmp/requirements.txt
 
-COPY retrival /app/retrival
+COPY retrieval /app/retrieval
 
 CMD ["bash"]

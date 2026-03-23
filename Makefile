@@ -1,4 +1,4 @@
-.PHONY: build-clews bash-clews build-discogs-vinet bash-discogs-vinet build-retrival bash-retrival
+.PHONY: build-clews bash-clews build-discogs-vinet bash-discogs-vinet build-retrieval bash-retrieval
 
 build-clews:
 	docker compose build clews
@@ -12,8 +12,8 @@ build-discogs-vinet:
 bash-discogs-vinet:
 	docker compose run --rm discogs-vinet bash
 
-build-retrival:
-	docker compose build retrival --no-cache
+build-retrieval:
+	docker compose build retrieval --no-cache
 
-bash-retrival:
-	docker compose run --rm retrival bash
+bash-retrieval:
+	docker compose run --rm retrieval bash

@@ -33,9 +33,9 @@ import torch
 
 _ROOT = Path(__file__).parent
 
-# retrival/ package
-sys.path.insert(0, str(_ROOT / "retrival"))
-from retrival import FaissRetrievalIndex  # noqa: E402
+# retrieval/ package
+sys.path.insert(0, str(_ROOT))
+from retrieval import FaissRetrievalIndex  # noqa: E402
 
 # eval/eval.py — loaded via importlib to avoid shadowing the builtin `eval`
 _eval_spec = importlib.util.spec_from_file_location(

@@ -1,16 +1,16 @@
 services:
-  retrival:
+  retrieval:
     build:
       context: .
-      dockerfile: retrival/Dockerfile
-    container_name: retrival-service
+      dockerfile: retrieval/Dockerfile
+    container_name: retrieval-service
     environment:
       PYTHONDONTWRITEBYTECODE: "1"
       PYTHONUNBUFFERED: "1"
       OMP_NUM_THREADS: "1"
     working_dir: /app
     volumes:
-      - ./retrival:/app/retrival
+      - ./retrieval:/app/retrieval
       - ./extractor:/app/extractor
       - "/Volumes/T7 Shield/discogs/:/data/discogs"
     tty: true

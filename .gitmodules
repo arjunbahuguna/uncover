@@ -1,5 +1,5 @@
 [submodule "eval/synesis"]
-	path = retrival/eval/synesis
+	path = retrieval/eval/synesis
 	url = https://github.com/arjunbahuguna/synesis
 [submodule "models/Discogs-VINet"]
 	path = models/Discogs-VINet

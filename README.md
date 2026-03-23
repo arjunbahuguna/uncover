@@ -67,7 +67,7 @@ Notes:
 Run from the repo root:
 
 ```bash
-python retrival/eval_retrieval.py \
+python retrieval/eval_retrieval.py \
 	--first-list extractor/first_embeddings.txt \
 	--second-list extractor/second_embeddings.txt \
 	--metadata-json /data/discogs_test_subset.json \
