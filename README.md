@@ -82,3 +82,42 @@ Notes:
 - `--second-list` is the query embeddings list.
 - `--metadata-json` must contain `version_id -> [{youtube_id, ...}]` mappings.
 - The script computes a full pairwise L2 distance matrix, then evaluates using `eval/eval.py` metrics: mAP, MR1, NAR, and R@K.
+
+
+## End-to-End Orchestrator Pipeline
+
+Run from the repo root:
+
+```bash
+python pipeline_orchestrator.py \
+	--input-json test-json.json \
+	--embedding-model discogs-vinet \
+	--docker-build-first \
+	--output-dir extractor/.pipeline_runtime/discogs_vinet_run
+```
+
+What it does:
+
+- Reads a JSON in the format `{work_id: [recording entries...]}`.
+- Randomly chooses one recording per work for index and one for query.
+- Runs embedding extraction with `extractor/extractor.py`.
+- Builds index/query lists and evaluates retrieval with mAP, MR1, NAR, and R@K.
+- Prints metrics and saves a full JSON report.
+
+Notes:
+
+- Recording entries must be strings (audio paths) or dicts with `path`/`audio_path`/`recording_path`/`file_path`/`filepath`.
+- Relative paths in the JSON are resolved from the repository root.
+- The script always runs extraction with `docker compose run --rm <service> python extractor/extractor.py ...`.
+- The script runs retrieval evaluation in Docker too: `docker compose run --rm retrieval python retrieval/eval_retrieval.py ...`.
+- Use `--docker-build-first` if you want to rebuild the model image before extraction.
+- `--output-dir` must be inside `extractor/` so container and host share generated files.
+- The script automatically writes embeddings to `<output-dir>/embeddings` and report JSON to `<output-dir>/report.json`.
+- If `<output-dir>/embeddings` already contains extracted files, only missing embeddings are extracted.
+- In Docker mode, host audio paths are mapped using the repository docker-compose mount: `/Volumes/T7 Shield/discogs` -> `/data/discogs`.
+
+`retrieval/eval_retrieval.py` is modularized and supports:
+
+- `--metadata-json` for the original metadata format.
+- `--labels-json` for explicit `embedding_stem -> {work_id, song_id}` labels.
+- `--output-json` to save metrics/details for orchestration.
