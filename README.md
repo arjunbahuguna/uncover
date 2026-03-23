@@ -70,8 +70,8 @@ Run from the repo root:
 python retrieval/eval_retrieval.py \
 	--first-list extractor/first_embeddings.txt \
 	--second-list extractor/second_embeddings.txt \
+	--embedding-model clews \
 	--metadata-json /data/discogs_test_subset.json \
-	--dim 1024 \
 	--k 1 10 100 \
 	--verbose
 ```
@@ -80,8 +80,11 @@ Notes:
 
 - `--first-list` is the database embeddings list.
 - `--second-list` is the query embeddings list.
+- `--embedding-model` selects the retrieval configuration automatically:
+  - `clews`: dimension `1024`, metric `l2`
+  - `discogs-vinet`: dimension `512`, metric `ip`, L2 normalization enabled
 - `--metadata-json` must contain `version_id -> [{youtube_id, ...}]` mappings.
-- The script computes a full pairwise L2 distance matrix, then evaluates using `eval/eval.py` metrics: mAP, MR1, NAR, and R@K.
+- The script computes a pairwise score matrix using the model-specific retrieval config, then evaluates using `eval/eval.py` metrics: mAP, MR1, NAR, and R@K.
 
 
 ## End-to-End Orchestrator Pipeline
@@ -118,6 +121,7 @@ Notes:
 
 `retrieval/eval_retrieval.py` is modularized and supports:
 
+- `--embedding-model` to select dimension/metric/normalization from the model name.
 - `--metadata-json` for the original metadata format.
 - `--labels-json` for explicit `embedding_stem -> {work_id, song_id}` labels.
 - `--output-json` to save metrics/details for orchestration.

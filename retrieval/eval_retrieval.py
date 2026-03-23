@@ -31,6 +31,12 @@ evaluate_from_distances = _eval_mod.evaluate_from_distances
 print_results = _eval_mod.print_results
 
 
+MODEL_CONFIGS: dict[str, dict[str, Any]] = {
+    "clews": {"dim": 1024, "metric": "l2", "normalize": False},
+    "discogs-vinet": {"dim": 512, "metric": "ip", "normalize": True},
+}
+
+
 def _require_torch() -> Any:
     try:
         return importlib.import_module("torch")
@@ -39,6 +45,14 @@ def _require_torch() -> Any:
             "PyTorch is required for retrieval/eval_retrieval.py. "
             "Install dependencies in the active environment or run via docker compose retrieval service."
         ) from exc
+
+
+def get_model_config(model: str) -> dict[str, Any]:
+    try:
+        return MODEL_CONFIGS[model]
+    except KeyError as exc:
+        supported = ", ".join(sorted(MODEL_CONFIGS))
+        raise ValueError(f"Unsupported embedding model '{model}'. Expected one of: {supported}") from exc
 
 
 def read_path_list(list_path: Path) -> list[Path]:
@@ -181,11 +195,38 @@ def filter_queries_with_positives(
     return valid
 
 
+def compute_distance_matrix(
+    query_vectors: np.ndarray,
+    database_vectors: np.ndarray,
+    metric: str,
+    normalize: bool,
+) -> Any:
+    torch = _require_torch()
+    query_tensor = torch.from_numpy(query_vectors)
+    database_tensor = torch.from_numpy(database_vectors)
+
+    if normalize:
+        query_tensor = torch.nn.functional.normalize(query_tensor, p=2, dim=1)
+        database_tensor = torch.nn.functional.normalize(database_tensor, p=2, dim=1)
+
+    if metric == "l2":
+        return torch.cdist(query_tensor, database_tensor, p=2)
+    if metric == "ip":
+        similarities = query_tensor @ database_tensor.transpose(0, 1)
+        return -similarities
+
+    raise ValueError(f"Unsupported metric: {metric}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Retrieval + cover-song evaluation")
     parser.add_argument("--first-list", type=Path, required=True)
     parser.add_argument("--second-list", type=Path, required=True)
-    parser.add_argument("--dim", type=int, default=1024)
+    parser.add_argument(
+        "--embedding-model",
+        choices=sorted(MODEL_CONFIGS.keys()),
+        required=True,
+    )
     parser.add_argument("--metadata-json", type=Path, default=None)
     parser.add_argument("--labels-json", type=Path, default=None)
     parser.add_argument("--k", type=int, nargs="+", default=[1, 10, 100])
@@ -195,11 +236,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def evaluate_from_args(args: argparse.Namespace) -> dict[str, object]:
-    torch = _require_torch()
     if args.metadata_json is None and args.labels_json is None:
         raise ValueError("Provide either --metadata-json or --labels-json")
     if args.metadata_json is not None and args.labels_json is not None:
         raise ValueError("Use only one label source: --metadata-json or --labels-json")
+
+    model_config = get_model_config(args.embedding_model)
 
     first_files = read_path_list(args.first_list)
     second_files = read_path_list(args.second_list)
@@ -215,8 +257,8 @@ def evaluate_from_args(args: argparse.Namespace) -> dict[str, object]:
         clique_map, song_map = load_metadata(args.metadata_json)
         label_source = "metadata-json"
 
-    db_vecs, db_ids = load_embeddings(first_files, args.dim)
-    q_vecs, q_ids = load_embeddings(second_files, args.dim)
+    db_vecs, db_ids = load_embeddings(first_files, model_config["dim"])
+    q_vecs, q_ids = load_embeddings(second_files, model_config["dim"])
 
     cand_c, cand_i, cand_valid = build_id_tensors(db_ids, clique_map, song_map)
     qry_c, qry_i, qry_valid = build_id_tensors(q_ids, clique_map, song_map)
@@ -239,7 +281,12 @@ def evaluate_from_args(args: argparse.Namespace) -> dict[str, object]:
     if len(cand_valid) == 0:
         raise ValueError("Database is empty -- nothing to evaluate")
 
-    dist_matrix = torch.cdist(torch.from_numpy(q_vecs), torch.from_numpy(db_vecs), p=2)
+    dist_matrix = compute_distance_matrix(
+        query_vectors=q_vecs,
+        database_vectors=db_vecs,
+        metric=model_config["metric"],
+        normalize=model_config["normalize"],
+    )
     recall_ks = tuple(args.k)
     results = evaluate_from_distances(
         dist_matrix=dist_matrix,
@@ -259,6 +306,10 @@ def evaluate_from_args(args: argparse.Namespace) -> dict[str, object]:
             **{f"R@{k}": float(results[f"R@{k}"]) for k in recall_ks},
         },
         "details": {
+            "embedding_model": args.embedding_model,
+            "embedding_dim": int(model_config["dim"]),
+            "retrieval_metric": str(model_config["metric"]),
+            "retrieval_normalize": bool(model_config["normalize"]),
             "label_source": label_source,
             "num_database_files": len(first_files),
             "num_query_files": len(second_files),

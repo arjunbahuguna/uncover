@@ -40,7 +40,15 @@ class QueryItem:
     source: str
 
 
+@dataclass(frozen=True)
+class RetrievalConfig:
+    embedding_dim: int
+    metric: str
+    normalize: bool
+
+
 def _normalize_path(raw: str) -> Path:
+    """Resolve repo-relative paths while preserving absolute paths unchanged."""
     path = Path(raw)
     if path.is_absolute():
         return path
@@ -50,6 +58,7 @@ def _normalize_path(raw: str) -> Path:
 def _extract_path_from_item(
     item: Any,
 ) -> Path | None:
+    """Accept either a plain string path or a metadata dict with a known path field."""
     if isinstance(item, str):
         return _normalize_path(item)
 
@@ -68,6 +77,7 @@ def load_work_to_paths(
     json_path: Path,
     require_existing_files: bool,
 ) -> dict[str, list[Path]]:
+    """Load the input JSON and keep only works that provide at least two distinct paths."""
     with json_path.open("r", encoding="utf-8") as handle:
         data = json.load(handle)
 
@@ -98,7 +108,10 @@ def load_work_to_paths(
     return work_to_paths
 
 
-def select_pairs(work_to_paths: dict[str, list[Path]], seed: int) -> list[SelectedWorkPair]:
+def select_pairs(
+    work_to_paths: dict[str, list[Path]], seed: int
+) -> list[SelectedWorkPair]:
+    """Pick one index recording and one query recording per work in a reproducible way."""
     rng = random.Random(seed)
     selected: list[SelectedWorkPair] = []
 
@@ -117,6 +130,7 @@ def select_pairs(work_to_paths: dict[str, list[Path]], seed: int) -> list[Select
 
 
 def ensure_unique_stems(paths: list[Path]) -> None:
+    """Fail fast when two different files would map to the same embedding basename."""
     stems: dict[str, Path] = {}
     duplicates: list[tuple[str, Path, Path]] = []
 
@@ -128,7 +142,9 @@ def ensure_unique_stems(paths: list[Path]) -> None:
             stems[stem] = path
 
     if duplicates:
-        lines = ["Found duplicate file stems. Embedding IDs are stem-based and would collide:"]
+        lines = [
+            "Found duplicate file stems. Embedding IDs are stem-based and would collide:"
+        ]
         for stem, p1, p2 in duplicates[:10]:
             lines.append(f"  stem='{stem}' -> '{p1}' and '{p2}'")
         if len(duplicates) > 10:
@@ -137,6 +153,7 @@ def ensure_unique_stems(paths: list[Path]) -> None:
 
 
 def write_path_list(paths: list[Path], output_txt: Path) -> None:
+    """Write one filesystem path per line for downstream CLI tools."""
     output_txt.parent.mkdir(parents=True, exist_ok=True)
     with output_txt.open("w", encoding="utf-8") as handle:
         for path in paths:
@@ -144,6 +161,7 @@ def write_path_list(paths: list[Path], output_txt: Path) -> None:
 
 
 def extractor_host_path_to_container(path: Path) -> Path:
+    """Translate a host path under extractor/ into the path seen inside Docker containers."""
     extractor_host = (REPO_ROOT / "extractor").resolve()
     extractor_container = Path("/app/extractor")
 
@@ -156,6 +174,7 @@ def extractor_host_path_to_container(path: Path) -> Path:
 
 
 def _docker_service_from_model(model: str) -> str:
+    """Map the embedding model name to the docker-compose service name."""
     if model == "clews":
         return "clews"
     if model == "discogs-vinet":
@@ -163,7 +182,17 @@ def _docker_service_from_model(model: str) -> str:
     raise ValueError(f"Unsupported embedding model: {model}")
 
 
+def retrieval_config_from_model(model: str) -> RetrievalConfig:
+    """Return retrieval settings that must match the selected embedding model."""
+    if model == "clews":
+        return RetrievalConfig(embedding_dim=1024, metric="l2", normalize=False)
+    if model == "discogs-vinet":
+        return RetrievalConfig(embedding_dim=512, metric="ip", normalize=True)
+    raise ValueError(f"Unsupported embedding model: {model}")
+
+
 def _ensure_path_under(path: Path, base: Path) -> None:
+    """Guard against passing paths outside the subset mounted into containers."""
     try:
         path.resolve().relative_to(base.resolve())
     except ValueError as exc:
@@ -176,6 +205,7 @@ def run_embedding_extractor_docker(
     output_dir: Path,
     docker_build_first: bool,
 ) -> None:
+    """Run the model-specific extractor inside its Docker service."""
     service = _docker_service_from_model(model)
 
     # In docker compose, only selected folders are mounted. Keep runtime files in extractor/.
@@ -183,6 +213,7 @@ def run_embedding_extractor_docker(
     _ensure_path_under(input_list, mounted_base)
     _ensure_path_under(output_dir, mounted_base)
 
+    # The container sees the repo mounted at /app, so pass repo-relative paths here.
     input_rel = input_list.resolve().relative_to(REPO_ROOT)
     output_rel = output_dir.resolve().relative_to(REPO_ROOT)
 
@@ -225,11 +256,12 @@ def run_retrieval_evaluation_docker(
     first_list: Path,
     second_list: Path,
     labels_json: Path,
-    dim: int,
+    embedding_model: str,
     recall_ks: tuple[int, ...],
     output_json: Path,
     verbose: bool,
 ) -> None:
+    """Run retrieval evaluation inside the retrieval service with explicit label mappings."""
     cmd = [
         "docker",
         "compose",
@@ -242,10 +274,10 @@ def run_retrieval_evaluation_docker(
         str(first_list),
         "--second-list",
         str(second_list),
+        "--embedding-model",
+        str(embedding_model),
         "--labels-json",
         str(labels_json),
-        "--dim",
-        str(dim),
         "--k",
         *[str(k) for k in recall_ks],
         "--output-json",
@@ -262,12 +294,16 @@ def run_retrieval_evaluation_docker(
         raise RuntimeError("Docker retrieval evaluation failed.")
 
 
-def embedding_path_for_audio(audio_path: Path, embeddings_dir: Path, model: str) -> Path:
+def embedding_path_for_audio(
+    audio_path: Path, embeddings_dir: Path, model: str
+) -> Path:
+    """Derive the embedding filename from the audio stem and model output format."""
     suffix = ".pt" if model == "clews" else ".npy"
     return embeddings_dir / f"{audio_path.stem}{suffix}"
 
 
 def parse_int_list(raw: str) -> tuple[int, ...]:
+    """Parse comma-separated integers from the CLI into a tuple."""
     values: list[int] = []
     for token in raw.split(","):
         token = token.strip()
@@ -280,18 +316,24 @@ def parse_int_list(raw: str) -> tuple[int, ...]:
 
 
 def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
+    retrieval_config = retrieval_config_from_model(args.embedding_model)
+
     output_dir = args.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     embeddings_dir = output_dir / "embeddings"
     embeddings_dir.mkdir(parents=True, exist_ok=True)
     report_json = output_dir / "report.json"
 
-    docker_runtime_root = REPO_ROOT / "extractor" / ".pipeline_runtime" / output_dir.name
+    # Runtime helper files live under extractor/ because that subtree is mounted into the
+    # model and retrieval containers. The final report still lives in the requested output dir.
+    docker_runtime_root = (
+        REPO_ROOT / "extractor" / ".pipeline_runtime" / output_dir.name
+    )
     docker_runtime_root.mkdir(parents=True, exist_ok=True)
 
     work_to_paths = load_work_to_paths(
         json_path=args.input_json,
-        require_existing_files= False,
+        require_existing_files=False,
     )
     if not work_to_paths:
         raise ValueError(
@@ -322,6 +364,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         for pair in selected_pairs
     ]
 
+    # Retrieval labels are keyed by embedding stem, so stem collisions would corrupt evaluation.
     all_audio_paths = [item.audio_path for item in index_items + query_items]
     ensure_unique_stems(all_audio_paths)
 
@@ -342,10 +385,13 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
                 "--skip-embedding-extraction was set, but some embeddings are missing. "
                 f"Missing: {len(missing_audio_paths)}"
             )
-        print("Skipping embedding extraction as requested. All embeddings already exist.")
+        print(
+            "Skipping embedding extraction as requested. All embeddings already exist."
+        )
     else:
         if missing_audio_paths:
-            # Input JSON paths are used as-is; they must be container-accessible.
+            # The extractor consumes audio paths exactly as listed here; mounting those
+            # audio locations into the container is the caller's responsibility.
             write_path_list(missing_audio_paths, audio_list_path)
             print(
                 "Embeddings already present for "
@@ -364,14 +410,18 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
 
     index_embeddings: list[Path] = []
     for item in index_items:
-        emb_path = embedding_path_for_audio(item.audio_path, embeddings_dir, args.embedding_model)
+        emb_path = embedding_path_for_audio(
+            item.audio_path, embeddings_dir, args.embedding_model
+        )
         if not emb_path.is_file():
             raise FileNotFoundError(f"Missing index embedding file: {emb_path}")
         index_embeddings.append(emb_path)
 
     query_embeddings: list[Path] = []
     for item in query_items:
-        emb_path = embedding_path_for_audio(item.audio_path, embeddings_dir, args.embedding_model)
+        emb_path = embedding_path_for_audio(
+            item.audio_path, embeddings_dir, args.embedding_model
+        )
         if not emb_path.is_file():
             raise FileNotFoundError(f"Missing query embedding file: {emb_path}")
         query_embeddings.append(emb_path)
@@ -383,6 +433,8 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
 
     first_list_docker = docker_runtime_root / "first_embeddings_docker.txt"
     second_list_docker = docker_runtime_root / "second_embeddings_docker.txt"
+    # The retrieval container cannot use host paths directly, so write a second pair of
+    # list files using the mounted /app/extractor view of the same embedding files.
     write_path_list(
         [extractor_host_path_to_container(p) for p in index_embeddings],
         first_list_docker,
@@ -399,11 +451,16 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         stem_to_work_id[stem] = item.work_id
         stem_to_song_id[stem] = item.song_id
 
+    # eval_retrieval.py accepts an explicit stem -> {work_id, song_id} mapping, which avoids
+    # depending on the original dataset metadata format during orchestration.
     labels_json = output_dir / "embedding_labels.json"
     with labels_json.open("w", encoding="utf-8") as f:
         json.dump(
             {
-                stem: {"work_id": stem_to_work_id[stem], "song_id": stem_to_song_id[stem]}
+                stem: {
+                    "work_id": stem_to_work_id[stem],
+                    "song_id": stem_to_song_id[stem],
+                }
                 for stem in sorted(stem_to_work_id.keys())
             },
             f,
@@ -416,14 +473,16 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         first_list=extractor_host_path_to_container(first_list_docker),
         second_list=extractor_host_path_to_container(second_list_docker),
         labels_json=extractor_host_path_to_container(labels_json),
-        dim=args.embedding_dim,
+        embedding_model=args.embedding_model,
         recall_ks=parse_int_list(args.recall_ks),
         output_json=extractor_host_path_to_container(eval_results_json),
         verbose=args.verbose_eval,
     )
 
     if not eval_results_json.is_file():
-        raise FileNotFoundError(f"Expected evaluation output not found: {eval_results_json}")
+        raise FileNotFoundError(
+            f"Expected evaluation output not found: {eval_results_json}"
+        )
     with eval_results_json.open("r", encoding="utf-8") as f:
         eval_output = json.load(f)
 
@@ -446,7 +505,9 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             "files": [],
         },
         "embedding_model": args.embedding_model,
-        "embedding_dim": args.embedding_dim,
+        "embedding_dim": retrieval_config.embedding_dim,
+        "retrieval_metric": retrieval_config.metric,
+        "retrieval_normalize": retrieval_config.normalize,
         "output_dir": str(output_dir),
         "embeddings_dir": str(embeddings_dir),
         "report_json": str(report_json),
@@ -475,6 +536,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the CLI for the orchestrator entrypoint."""
     parser = argparse.ArgumentParser(
         description="General orchestrator for selection, optional augmentation, embeddings, and retrieval evaluation.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -495,7 +557,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="If set, do not check path existence while loading JSON.",
     )
 
-    parser.add_argument("--seed", type=int, default=42, help="Random seed for pair selection.")
+    parser.add_argument(
+        "--seed", type=int, default=42, help="Random seed for pair selection."
+    )
     parser.add_argument(
         "--output-dir",
         type=Path,
@@ -519,12 +583,6 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         help="Embedding model argument passed to extractor.",
     )
-    parser.add_argument(
-        "--embedding-dim",
-        type=int,
-        default=1024,
-        help="Expected embedding dimension.",
-    )
 
     parser.add_argument(
         "--recall-ks",
@@ -541,6 +599,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    """Parse CLI arguments, run the pipeline, and persist the final report."""
     parser = build_parser()
     args = parser.parse_args()
 
