@@ -1,4 +1,10 @@
-.PHONY: build-clews bash-clews build-discogs-vinet bash-discogs-vinet build-retrieval bash-retrieval
+.PHONY: build-clews bash-clews build-discogs-vinet bash-discogs-vinet build-retrieval bash-retrieval build-degradation bash-degradation
+
+build-degradation:
+	docker compose build degradation
+
+bash-degradation:
+	docker compose run --rm degradation bash
 
 build-clews:
 	docker compose build clews

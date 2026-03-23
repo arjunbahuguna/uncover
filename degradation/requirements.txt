@@ -1,0 +1,4 @@
+demucs
+pedalboard
+librosa
+soundfile
