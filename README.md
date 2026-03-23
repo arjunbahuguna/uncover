@@ -104,8 +104,8 @@ Run from the repo root:
 python pipeline_orchestrator.py \
 	--input-json test-json.json \
 	--embedding-model discogs-vinet \
-	--enable-pitch-shift-augmentation \
-	--pitch-shift-n-steps 2.0 \
+	--enable-time-stretch-augmentation \
+	--time-stretch-rate 1.2 \
 	--docker-build-first \
 	--output-dir extractor/.pipeline_runtime/discogs_vinet_run
 ```
@@ -114,7 +114,7 @@ What it does:
 
 - Reads a JSON in the format `{work_id: [recording entries...]}`.
 - Randomly chooses one recording per work for index and one for query.
-- Optionally creates pitch-shifted query files and uses those augmented files as the only queries for evaluation.
+- Optionally creates augmented query files (pitch shift or time stretch) and uses those augmented files as the only queries for evaluation.
 - Runs embedding extraction with `extractor/extractor.py`.
 - Builds index/query lists and evaluates retrieval with mAP, MR1, NAR, and R@K.
 - Prints metrics and saves a full JSON report.
@@ -126,7 +126,10 @@ Notes:
 - The script always runs extraction with `docker compose run --rm <service> python extractor/extractor.py ...`.
 - The script runs retrieval evaluation in Docker too: `docker compose run --rm retrieval python retrieval/eval_retrieval.py ...`.
 - `--enable-pitch-shift-augmentation` applies `degradation/pitch_shift.py` to each selected query and evaluates retrieval using only the augmented queries.
-- `--pitch-shift-n-steps` controls semitone shift for the augmented query files.
+- `--pitch-shift-n-steps` controls semitone shift for pitch-shifted query files.
+- `--enable-time-stretch-augmentation` applies `degradation/time_stretch.py` to each selected query and evaluates retrieval using only the augmented queries.
+- `--time-stretch-rate` controls time-stretch factor for time-stretched query files.
+- Use only one augmentation mode per run (`--enable-pitch-shift-augmentation` or `--enable-time-stretch-augmentation`).
 - Use `--docker-build-first` if you want to rebuild the model image before extraction.
 - `--output-dir` must be inside `extractor/` so container and host share generated files.
 - The script automatically writes embeddings to `<output-dir>/embeddings` and report JSON to `<output-dir>/report.json`.

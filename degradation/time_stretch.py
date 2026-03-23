@@ -1,5 +1,7 @@
 import argparse
 import logging
+import subprocess
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -22,6 +24,30 @@ def _write_audio(path, y, sr):
     (samples, channels), so we transpose multi-channel arrays before writing.
     """
     sf.write(path, y.T if y.ndim > 1 else y, sr)
+
+
+def _decode_input_to_temp_wav(input_path: str) -> tuple[tempfile.TemporaryDirectory, str]:
+    """Decode arbitrary input media to a temporary WAV via ffmpeg."""
+    temp_dir = tempfile.TemporaryDirectory(prefix="time_stretch_")
+    temp_wav = str(Path(temp_dir.name) / "decoded_input.wav")
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        input_path,
+        "-vn",
+        "-acodec",
+        "pcm_s16le",
+        temp_wav,
+    ]
+    process = subprocess.run(cmd, check=False, capture_output=True, text=True)
+    if process.returncode != 0:
+        temp_dir.cleanup()
+        raise RuntimeError(
+            "ffmpeg failed to decode input media to WAV. "
+            f"input={input_path}\n{process.stderr}"
+        )
+    return temp_dir, temp_wav
 
 
 def _parse_rates(rates_arg: str):
@@ -223,14 +249,14 @@ def build_parser():
         "--input_path",
         "--input-path-audio",
         dest="input_path",
-        required=True,
+        required=False,
         help="Input root folder containing .wav/.mp3 files",
     )
     parser.add_argument(
         "--output_path",
         "--output-path-audio",
         dest="output_path",
-        required=True,
+        required=False,
         help="Output root folder for augmented audio files",
     )
     parser.add_argument(
@@ -254,17 +280,65 @@ def build_parser():
             "<output_path>/time_stretch_failures.log"
         ),
     )
+    parser.add_argument(
+        "--input",
+        dest="single_input",
+        type=str,
+        default=None,
+        help="Single-file mode: path to one input audio file.",
+    )
+    parser.add_argument(
+        "--output",
+        dest="single_output",
+        type=str,
+        default=None,
+        help="Single-file mode: path to output audio file (recommended .wav).",
+    )
+    parser.add_argument(
+        "--stretch-rate",
+        dest="single_stretch_rate",
+        type=float,
+        default=1.0,
+        help="Single-file mode: time-stretch rate (> 0).",
+    )
     return parser
 
 
 if __name__ == "__main__":
     args = build_parser().parse_args()
 
-    rates = _parse_rates(args.stretch_rates)
-    ts_tool = TimeStretchTool(backend=args.backend)
-    ts_tool.process_folder(
-        input_path=args.input_path,
-        output_path=args.output_path,
-        stretch_rates=rates,
-        fail_log_path=args.fail_log_path,
-    )
+    if (args.single_input is None) != (args.single_output is None):
+        raise ValueError("Single-file mode requires both --input and --output")
+
+    if args.single_input is not None:
+        if args.single_stretch_rate <= 0:
+            raise ValueError("--stretch-rate must be > 0")
+
+        temp_dir, decoded_input_wav = _decode_input_to_temp_wav(args.single_input)
+        try:
+            ts_tool = TimeStretchTool(backend=args.backend)
+            ts_tool.process(
+                input_path=decoded_input_wav,
+                output_path=args.single_output,
+                stretch_rate=args.single_stretch_rate,
+            )
+        finally:
+            temp_dir.cleanup()
+        print(
+            f"[{args.backend}] {args.single_input} -> {args.single_output} "
+            f"(rate={args.single_stretch_rate})"
+        )
+    else:
+        if not args.input_path or not args.output_path:
+            raise ValueError(
+                "Batch mode requires --input_path and --output_path. "
+                "For one file, use --input and --output."
+            )
+        rates = _parse_rates(args.stretch_rates)
+        ts_tool = TimeStretchTool(backend=args.backend)
+        ts_tool.process_folder(
+            input_path=args.input_path,
+            output_path=args.output_path,
+            stretch_rates=rates,
+            fail_log_path=args.fail_log_path,
+        )

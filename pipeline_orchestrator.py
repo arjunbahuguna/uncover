@@ -243,6 +243,11 @@ def _format_pitch_shift_token(n_steps: float) -> str:
     return token
 
 
+def _format_time_stretch_token(rate: float) -> str:
+    token = str(rate).replace(".", "p").replace("-", "m")
+    return token
+
+
 def apply_pitch_shift_augmentation(
     input_audio: Path,
     output_audio: Path,
@@ -276,6 +281,44 @@ def apply_pitch_shift_augmentation(
     if process.returncode != 0:
         raise RuntimeError(
             "Pitch-shift augmentation failed in the degradation docker service."
+        )
+
+
+def apply_time_stretch_augmentation(
+    input_audio: Path,
+    output_audio: Path,
+    stretch_rate: float,
+) -> None:
+    """Create a time-stretched copy using the degradation Docker service."""
+    output_audio.parent.mkdir(parents=True, exist_ok=True)
+
+    input_for_container = _path_for_degradation_container(input_audio)
+    output_for_container = _path_for_degradation_container(output_audio)
+
+    cmd = [
+        "docker",
+        "compose",
+        "run",
+        "--rm",
+        "degradation",
+        "python",
+        "degradation/time_stretch.py",
+        "--input",
+        str(input_for_container),
+        "--output",
+        str(output_for_container),
+        "--stretch-rate",
+        str(stretch_rate),
+        "--backend",
+        "librosa",
+    ]
+    print("Running time-stretch augmentation docker command:")
+    print(" ".join(cmd))
+
+    process = subprocess.run(cmd, cwd=REPO_ROOT, check=False)
+    if process.returncode != 0:
+        raise RuntimeError(
+            "Time-stretch augmentation failed in the degradation docker service."
         )
 
 
@@ -447,6 +490,11 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     ]
 
     augmentation_records: list[AugmentationResult] = []
+    if args.enable_pitch_shift_augmentation and args.enable_time_stretch_augmentation:
+        raise ValueError(
+            "Choose only one query augmentation mode: pitch shift or time stretch."
+        )
+
     if args.enable_pitch_shift_augmentation:
         token = _format_pitch_shift_token(args.pitch_shift_n_steps)
         augmented_query_items: list[QueryItem] = []
@@ -471,6 +519,35 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
                     work_id=item.work_id,
                     song_id=f"{item.work_id}::query_pitch_shift",
                     source="pitch_shift_query",
+                )
+            )
+
+        query_items = augmented_query_items
+
+    if args.enable_time_stretch_augmentation:
+        token = _format_time_stretch_token(args.time_stretch_rate)
+        augmented_query_items: list[QueryItem] = []
+        for item in query_items:
+            out_name = f"{item.audio_path.stem}__time_stretch_{token}.wav"
+            out_path = augmentation_root / out_name
+            apply_time_stretch_augmentation(
+                input_audio=item.audio_path,
+                output_audio=out_path,
+                stretch_rate=args.time_stretch_rate,
+            )
+            augmentation_records.append(
+                AugmentationResult(
+                    output_path=out_path,
+                    kind="time_stretch",
+                    params={"stretch_rate": args.time_stretch_rate},
+                )
+            )
+            augmented_query_items.append(
+                QueryItem(
+                    audio_path=out_path,
+                    work_id=item.work_id,
+                    song_id=f"{item.work_id}::query_time_stretch",
+                    source="time_stretch_query",
                 )
             )
 
@@ -612,10 +689,12 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         "seed": args.seed,
         "works_total_in_json": len(work_to_paths),
         "works_used": len(selected_pairs),
-        "augmentations_enabled": args.enable_pitch_shift_augmentation,
+        "augmentations_enabled": (
+            args.enable_pitch_shift_augmentation or args.enable_time_stretch_augmentation
+        ),
         "augmentation_summary": {
-            "pitch_shift": len(augmentation_records),
-            "time_stretch": 0,
+            "pitch_shift": sum(1 for rec in augmentation_records if rec.kind == "pitch_shift"),
+            "time_stretch": sum(1 for rec in augmentation_records if rec.kind == "time_stretch"),
             "reverb": 0,
             "files": [
                 {
@@ -715,6 +794,17 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=2.0,
         help="Semitone shift used when --enable-pitch-shift-augmentation is enabled.",
+    )
+    parser.add_argument(
+        "--enable-time-stretch-augmentation",
+        action="store_true",
+        help="If set, replace query audio with time-stretched versions before embedding extraction.",
+    )
+    parser.add_argument(
+        "--time-stretch-rate",
+        type=float,
+        default=1.2,
+        help="Stretch rate used when --enable-time-stretch-augmentation is enabled.",
     )
 
     parser.add_argument(
