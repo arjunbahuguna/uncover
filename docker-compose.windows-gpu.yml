@@ -1,0 +1,39 @@
+services:
+  clews:
+    build:
+      context: .
+      dockerfile: models/clews.Dockerfile
+    container_name: clews-model
+    volumes:
+      - ./models/clews:/app
+      - ./extractor:/app/extractor
+      - E:/Master/Master_Util/datasets_cover/discogs:/data/discogs
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    tty: true
+    stdin_open: true
+
+  discogs-vinet:
+    platform: linux/amd64
+    build:
+      context: .
+      dockerfile: models/discogs-vinet.Dockerfile
+    container_name: discogs-vinet-model
+    volumes:
+      - ./models/Discogs-VINet:/app
+      - ./extractor:/app/extractor
+      - E:/Master/Master_Util/datasets_cover/discogs:/data/discogs
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    tty: true
+    stdin_open: true
