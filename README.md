@@ -60,3 +60,25 @@ python degradation/reverb.py --input in.wav --output out_reverb_ir.wav --mode ir
 Notes:
 
 - `--input` and `--output` are required for all degradation scripts.
+
+
+## Retrieval Evaluation (mAP, MR1, NAR, R@K)
+
+Run from the repo root:
+
+```bash
+python retrival/eval_retrieval.py \
+	--first-list extractor/first_embeddings.txt \
+	--second-list extractor/second_embeddings.txt \
+	--metadata-json /data/discogs_test_subset.json \
+	--dim 1024 \
+	--k 1 10 100 \
+	--verbose
+```
+
+Notes:
+
+- `--first-list` is the database embeddings list.
+- `--second-list` is the query embeddings list.
+- `--metadata-json` must contain `version_id -> [{youtube_id, ...}]` mappings.
+- The script computes a full pairwise L2 distance matrix, then evaluates using `eval/eval.py` metrics: mAP, MR1, NAR, and R@K.
