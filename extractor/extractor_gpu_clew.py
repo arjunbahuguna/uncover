@@ -15,7 +15,18 @@ from concurrent.futures import ThreadPoolExecutor
 
 # Import internal CLEWS utility classes
 # Assumes the current working directory is /app
-sys.path.append("/app")
+current_dir = Path(__file__).resolve().parent
+project_root = current_dir.parent
+
+sys.path.insert(0, str(project_root))
+sys.path.insert(0, str(project_root / "models" / "clews"))
+
+
+import logging
+import argparse
+import torch
+import importlib
+# 现在再导入 utils 就不会报错了
 from utils import pytorch_utils, audio_utils
 
 logger = logging.getLogger(__name__)
@@ -104,6 +115,13 @@ def extract_embeddings_clews_fast(file_paths, output_path, checkpoint_path):
     """
     device = "cuda"
     model, conf = load_clews_model(checkpoint_path, device)
+
+    # Ensure the output directory exists within the container
+    output_path.mkdir(parents=True, exist_ok=True)
+    print(f"Output directory confirmed: {output_path.absolute()}")
+
+
+
     # Buffer queue to prevent memory overflow
     audio_queue = queue.Queue(maxsize=20)
 

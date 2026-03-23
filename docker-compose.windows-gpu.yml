@@ -1,13 +1,31 @@
 services:
+  retrieval:
+    build:
+      context: .
+      dockerfile: retrieval/retrieval.Dockerfile
+    container_name: retrieval-service
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+      OMP_NUM_THREADS: "1"
+    working_dir: /app
+    volumes:
+      - .:/app
+      - "E:/Master/Master_Util/datasets_cover/discogs:/data/discogs"
+    tty: true
+    stdin_open: true
+
   clews:
     build:
       context: .
       dockerfile: models/clews.Dockerfile
     container_name: clews-model
+    environment:
+      OMP_NUM_THREADS: "1"
+    working_dir: /app
     volumes:
-      - ./models/clews:/app
-      - ./extractor:/app/extractor
-      - E:/Master/Master_Util/datasets_cover/discogs:/data/discogs
+      - .:/app
+      - "E:/Master/Master_Util/datasets_cover/discogs:/data/discogs"
     deploy:
       resources:
         reservations:
@@ -24,10 +42,14 @@ services:
       context: .
       dockerfile: models/discogs-vinet.Dockerfile
     container_name: discogs-vinet-model
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+      OMP_NUM_THREADS: "1"
+    working_dir: /app
     volumes:
-      - ./models/Discogs-VINet:/app
-      - ./extractor:/app/extractor
-      - E:/Master/Master_Util/datasets_cover/discogs:/data/discogs
+      - .:/app
+      - "E:/Master/Master_Util/datasets_cover/discogs:/data/discogs"
     deploy:
       resources:
         reservations:
