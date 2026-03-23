@@ -35,6 +35,20 @@ class QueryItem:
     source: str
 
 
+@dataclass(frozen=True)
+class RetrievalConfig:
+    embedding_dim: int
+    metric: str
+    normalize: bool
+
+
+@dataclass(frozen=True)
+class AugmentationResult:
+    output_path: Path
+    kind: str
+    params: dict[str, Any]
+
+
 def _extract_path_from_item(item: Any) -> Path | None:
     """
     Extracts a valid file path from various input formats (string or dictionary).
@@ -155,7 +169,9 @@ def ensure_unique_stems(paths: list[Path]) -> None:
             stems[stem] = path
 
     if duplicates:
-        lines = ["Found duplicate file stems. Embedding IDs are stem-based and would collide:"]
+        lines = [
+            "Found duplicate file stems. Embedding IDs are stem-based and would collide:"
+        ]
         for stem, p1, p2 in duplicates[:10]:
             lines.append(f"  stem='{stem}' -> '{p1}' and '{p2}'")
         raise ValueError("\n".join(lines))
@@ -218,6 +234,119 @@ def ensure_docker_env(service: str) -> None:
 
     except Exception as e:
         print(f">>> [Warning] Could not parse image status. Delegating to Docker default behavior. ({str(e)})")
+
+
+def _path_for_extractor_container(path: Path) -> Path:
+    """Map extractor-local files to /app/extractor; keep externally mounted paths as-is."""
+    extractor_host = (REPO_ROOT / "extractor").resolve()
+    try:
+        path.resolve().relative_to(extractor_host)
+    except ValueError:
+        return path
+    return extractor_host_path_to_container(path)
+
+
+def _path_for_degradation_container(path: Path) -> Path:
+    """Map host paths to the degradation container mount layout."""
+    resolved = path.resolve()
+
+    try:
+        rel_repo = resolved.relative_to(REPO_ROOT.resolve())
+        return DEGRADATION_CONTAINER_REPO_ROOT / rel_repo
+    except ValueError:
+        pass
+
+    try:
+        rel_discogs = resolved.relative_to(DEGRADATION_DISCOGS_HOST_ROOT.resolve())
+        return DEGRADATION_DISCOGS_CONTAINER_ROOT / rel_discogs
+    except ValueError:
+        pass
+
+    return resolved
+
+
+def _format_pitch_shift_token(n_steps: float) -> str:
+    token = str(n_steps).replace(".", "p").replace("-", "m")
+    return token
+
+
+def _format_time_stretch_token(rate: float) -> str:
+    token = str(rate).replace(".", "p").replace("-", "m")
+    return token
+
+
+def apply_pitch_shift_augmentation(
+    input_audio: Path,
+    output_audio: Path,
+    n_steps: float,
+) -> None:
+    """Create a pitch-shifted copy using the degradation Docker service."""
+    output_audio.parent.mkdir(parents=True, exist_ok=True)
+
+    input_for_container = _path_for_degradation_container(input_audio)
+    output_for_container = _path_for_degradation_container(output_audio)
+
+    cmd = [
+        "docker",
+        "compose",
+        "run",
+        "--rm",
+        "degradation",
+        "python",
+        "degradation/pitch_shift.py",
+        "--input",
+        str(input_for_container),
+        "--output",
+        str(output_for_container),
+        "--n-steps",
+        str(n_steps),
+    ]
+    print("Running pitch-shift augmentation docker command:")
+    print(" ".join(cmd))
+
+    process = subprocess.run(cmd, cwd=REPO_ROOT, check=False)
+    if process.returncode != 0:
+        raise RuntimeError(
+            "Pitch-shift augmentation failed in the degradation docker service."
+        )
+
+
+def apply_time_stretch_augmentation(
+    input_audio: Path,
+    output_audio: Path,
+    stretch_rate: float,
+) -> None:
+    """Create a time-stretched copy using the degradation Docker service."""
+    output_audio.parent.mkdir(parents=True, exist_ok=True)
+
+    input_for_container = _path_for_degradation_container(input_audio)
+    output_for_container = _path_for_degradation_container(output_audio)
+
+    cmd = [
+        "docker",
+        "compose",
+        "run",
+        "--rm",
+        "degradation",
+        "python",
+        "degradation/time_stretch.py",
+        "--input",
+        str(input_for_container),
+        "--output",
+        str(output_for_container),
+        "--stretch-rate",
+        str(stretch_rate),
+        "--backend",
+        "librosa",
+    ]
+    print("Running time-stretch augmentation docker command:")
+    print(" ".join(cmd))
+
+    process = subprocess.run(cmd, cwd=REPO_ROOT, check=False)
+    if process.returncode != 0:
+        raise RuntimeError(
+            "Time-stretch augmentation failed in the degradation docker service."
+        )
 
 
 def run_embedding_extractor_docker(input_list: Path, model: str, output_dir: Path) -> None:
@@ -321,6 +450,8 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     # Runtime directory for Docker volume mounting
     docker_runtime_root = REPO_ROOT / "extractor" / "pipeline_runtime" / output_dir.name
     docker_runtime_root.mkdir(parents=True, exist_ok=True)
+    augmentation_root = docker_runtime_root / "augmented_queries"
+    augmentation_root.mkdir(parents=True, exist_ok=True)
 
     # Load and validate data
     work_to_paths = load_work_to_paths(args.input_json)
