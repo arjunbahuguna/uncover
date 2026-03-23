@@ -1,64 +1,50 @@
 # UnCover
 Unified evaluation pipeline for version identification models
 
-## CLEWS Inference
+## Embedding Extraction
 
-The `clews` service runs the code from `models/clews` inside Docker.
+Extraction is now done from inside the corresponding model container by running `extractor.py` with the matching model name.
 
-Build the image:
+The input file must be a txt file with one absolute audio path per line (for example under `/data/discogs/...`).
+
+### CLEWS extraction
+
+Build and enter the CLEWS container:
 
 ```bash
 make build-clews
-```
-
-Open a shell in the container:
-
-```bash
 make bash-clews
 ```
 
-Run inference (inside the container) with a checkpoint and a single input file:
+Run extraction inside the container:
 
 ```bash
-python inference.py --checkpoint=checkpoints/clews/dvi-clews/checkpoint_best.ckpt --fn_in=inputs/my_video.wav --fn_out=output/filename.pt --device=cpu
+python extractor/extractor.py --input extractor/path_test.txt --model clews --output-path output_embeddings
 ```
 
-Notes:
+### Discogs-VINet extraction
 
-- Use `.wav` input files for the most reliable decoding in this setup.
-- Paths are relative to `/app` inside the container (`models/clews` on the host).
-- The output embedding is saved as a `.pt` file at the path given by `--fn_out`.
-
-## Discogs-VINet Inference
-
-The `discogs-vinet` service runs the code from `models/Discogs-VINet` inside Docker.
-
-Build the image:
+Build and enter the Discogs-VINet container:
 
 ```bash
 make build-discogs-vinet
+make bash-discogs-vinet
 ```
 
-Prepare an input directory under `models/Discogs-VINet` and place one or more `.wav` files there. The inference script scans directories recursively and only looks for `.wav` files.
-
-Run inference with the provided MIREX full-set checkpoint:
+Run extraction inside the container:
 
 ```bash
-docker compose run --rm discogs-vinet bash -lc '\
-source /opt/conda/etc/profile.d/conda.sh && \
-conda activate discogs-vinet && \
-python inference.py \
-	inputs \
-	logs/checkpoints/Discogs-VINet-MIREX-full_set/config.yaml \
-	outputs \
-'
+python extractor/extractor.py --input extractor/path_test.txt --model discogs-vinet --output-path output_embeddings
 ```
 
 Notes:
 
-- `inputs` is a directory, not a single file path. For a single track, place that track alone in the directory.
-- `outputs` will contain `.npy` embedding files with the same relative structure as the input tree.
-- If your source audio is not `.wav`, convert it first.
+
+- `--input` points to a plain text file where each line is one audio file path.
+- Use `--model clews` only in the CLEWS container and `--model discogs-vinet` only in the Discogs-VINet container.
+- CLEWS writes `.pt` embeddings. Discogs-VINet writes `.npy` embeddings.
+- `--output-path` is created automatically if it does not exist.
+
 
 ## Audio Degradations (CLI)
 
@@ -74,3 +60,25 @@ python degradation/reverb.py --input in.wav --output out_reverb_ir.wav --mode ir
 Notes:
 
 - `--input` and `--output` are required for all degradation scripts.
+
+
+## Retrieval Evaluation (mAP, MR1, NAR, R@K)
+
+Run from the repo root:
+
+```bash
+python retrieval/eval_retrieval.py \
+	--first-list extractor/first_embeddings.txt \
+	--second-list extractor/second_embeddings.txt \
+	--metadata-json /data/discogs_test_subset.json \
+	--dim 1024 \
+	--k 1 10 100 \
+	--verbose
+```
+
+Notes:
+
+- `--first-list` is the database embeddings list.
+- `--second-list` is the query embeddings list.
+- `--metadata-json` must contain `version_id -> [{youtube_id, ...}]` mappings.
+- The script computes a full pairwise L2 distance matrix, then evaluates using `eval/eval.py` metrics: mAP, MR1, NAR, and R@K.

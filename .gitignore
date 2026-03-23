@@ -210,3 +210,22 @@ __marimo__/
 discogs_test_subset.json
 plans/
 oz/
+
+# User-specific files
+discogs_test_subset.json
+plans/
+oz/
+
+
+# Ignore audio files
+*.wav
+*.mp3
+*.flac
+
+# Ignore .DS_Store files (macOS)
+.DS_Store
+
+# User-specific files
+discogs_test_subset.json
+plans/
+oz/
