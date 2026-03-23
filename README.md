@@ -48,18 +48,27 @@ Notes:
 
 ## Audio Degradations (CLI)
 
-Run from the repo root:
+Build and enter the degradation container:
+
+```bash
+make build-degradation
+make bash-degradation
+```
+
+Run from the repo root on the host or inside the container:
 
 ```bash
 python degradation/pitch_shift.py --input in.wav --output out_pitch.wav --n-steps 2
-python degradation/time_stretch.py --input in.wav --output out_stretch.wav --stretch-rate 1.2
+python degradation/time_stretch.py --input-path in_dir --output-path out_dir --stretch-rates 1.2
 python degradation/reverb.py --input in.wav --output out_reverb.wav --mode algo --wet-level 0.4
 python degradation/reverb.py --input in.wav --output out_reverb_ir.wav --mode ir --ir-path path/to/ir_or_ir_folder --wet-level 0.4
 ```
 
 Notes:
 
-- `--input` and `--output` are required for all degradation scripts.
+- `pitch_shift.py` and `reverb.py` require `--input` and `--output`.
+- `time_stretch.py` works on directories via `--input-path` and `--output-path`.
+- Docker usage follows the same pattern as the other services, for example: `docker compose run --rm degradation python degradation/pitch_shift.py --input /data/discogs/example.wav --output /data/discogs/example_pitch.wav --n-steps 2`.
 
 
 ## Retrieval Evaluation (mAP, MR1, NAR, R@K)
@@ -95,6 +104,8 @@ Run from the repo root:
 python pipeline_orchestrator.py \
 	--input-json test-json.json \
 	--embedding-model discogs-vinet \
+	--enable-pitch-shift-augmentation \
+	--pitch-shift-n-steps 2.0 \
 	--docker-build-first \
 	--output-dir extractor/.pipeline_runtime/discogs_vinet_run
 ```
@@ -103,6 +114,7 @@ What it does:
 
 - Reads a JSON in the format `{work_id: [recording entries...]}`.
 - Randomly chooses one recording per work for index and one for query.
+- Optionally creates pitch-shifted query files and uses those augmented files as the only queries for evaluation.
 - Runs embedding extraction with `extractor/extractor.py`.
 - Builds index/query lists and evaluates retrieval with mAP, MR1, NAR, and R@K.
 - Prints metrics and saves a full JSON report.
@@ -113,11 +125,13 @@ Notes:
 - Relative paths in the JSON are resolved from the repository root.
 - The script always runs extraction with `docker compose run --rm <service> python extractor/extractor.py ...`.
 - The script runs retrieval evaluation in Docker too: `docker compose run --rm retrieval python retrieval/eval_retrieval.py ...`.
+- `--enable-pitch-shift-augmentation` applies `degradation/pitch_shift.py` to each selected query and evaluates retrieval using only the augmented queries.
+- `--pitch-shift-n-steps` controls semitone shift for the augmented query files.
 - Use `--docker-build-first` if you want to rebuild the model image before extraction.
 - `--output-dir` must be inside `extractor/` so container and host share generated files.
 - The script automatically writes embeddings to `<output-dir>/embeddings` and report JSON to `<output-dir>/report.json`.
 - If `<output-dir>/embeddings` already contains extracted files, only missing embeddings are extracted.
-- In Docker mode, host audio paths are mapped using the repository docker-compose mount: `/Volumes/T7 Shield/discogs` -> `/data/discogs`.
+- Augmented query files are written under `extractor/.pipeline_runtime/<run>/augmented_queries` and are automatically converted to `/app/extractor/...` paths for the extractor container.
 
 `retrieval/eval_retrieval.py` is modularized and supports:
 

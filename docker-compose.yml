@@ -1,4 +1,20 @@
 services:
+  degradation:
+    build:
+      context: .
+      dockerfile: degradation/Dockerfile
+    container_name: degradation-service
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+      OMP_NUM_THREADS: "1"
+    working_dir: /app
+    volumes:
+      - .:/app
+      - "/Volumes/T7 Shield/discogs/:/data/discogs"
+    tty: true
+    stdin_open: true
+
   retrieval:
     build:
       context: .

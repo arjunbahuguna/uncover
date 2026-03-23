@@ -23,6 +23,9 @@ from typing import Any
 
 PathLike = str | Path
 REPO_ROOT = Path(__file__).resolve().parent
+DEGRADATION_CONTAINER_REPO_ROOT = Path("/app")
+DEGRADATION_DISCOGS_HOST_ROOT = Path("/Volumes/T7 Shield/discogs")
+DEGRADATION_DISCOGS_CONTAINER_ROOT = Path("/data/discogs")
 
 
 @dataclass
@@ -45,6 +48,13 @@ class RetrievalConfig:
     embedding_dim: int
     metric: str
     normalize: bool
+
+
+@dataclass(frozen=True)
+class AugmentationResult:
+    output_path: Path
+    kind: str
+    params: dict[str, Any]
 
 
 def _normalize_path(raw: str) -> Path:
@@ -199,6 +209,76 @@ def _ensure_path_under(path: Path, base: Path) -> None:
         raise ValueError(f"Path must be inside '{base}': {path}") from exc
 
 
+def _path_for_extractor_container(path: Path) -> Path:
+    """Map extractor-local files to /app/extractor; keep externally mounted paths as-is."""
+    extractor_host = (REPO_ROOT / "extractor").resolve()
+    try:
+        path.resolve().relative_to(extractor_host)
+    except ValueError:
+        return path
+    return extractor_host_path_to_container(path)
+
+
+def _path_for_degradation_container(path: Path) -> Path:
+    """Map host paths to the degradation container mount layout."""
+    resolved = path.resolve()
+
+    try:
+        rel_repo = resolved.relative_to(REPO_ROOT.resolve())
+        return DEGRADATION_CONTAINER_REPO_ROOT / rel_repo
+    except ValueError:
+        pass
+
+    try:
+        rel_discogs = resolved.relative_to(DEGRADATION_DISCOGS_HOST_ROOT.resolve())
+        return DEGRADATION_DISCOGS_CONTAINER_ROOT / rel_discogs
+    except ValueError:
+        pass
+
+    return resolved
+
+
+def _format_pitch_shift_token(n_steps: float) -> str:
+    token = str(n_steps).replace(".", "p").replace("-", "m")
+    return token
+
+
+def apply_pitch_shift_augmentation(
+    input_audio: Path,
+    output_audio: Path,
+    n_steps: float,
+) -> None:
+    """Create a pitch-shifted copy using the degradation Docker service."""
+    output_audio.parent.mkdir(parents=True, exist_ok=True)
+
+    input_for_container = _path_for_degradation_container(input_audio)
+    output_for_container = _path_for_degradation_container(output_audio)
+
+    cmd = [
+        "docker",
+        "compose",
+        "run",
+        "--rm",
+        "degradation",
+        "python",
+        "degradation/pitch_shift.py",
+        "--input",
+        str(input_for_container),
+        "--output",
+        str(output_for_container),
+        "--n-steps",
+        str(n_steps),
+    ]
+    print("Running pitch-shift augmentation docker command:")
+    print(" ".join(cmd))
+
+    process = subprocess.run(cmd, cwd=REPO_ROOT, check=False)
+    if process.returncode != 0:
+        raise RuntimeError(
+            "Pitch-shift augmentation failed in the degradation docker service."
+        )
+
+
 def run_embedding_extractor_docker(
     input_list: Path,
     model: str,
@@ -330,6 +410,8 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         REPO_ROOT / "extractor" / ".pipeline_runtime" / output_dir.name
     )
     docker_runtime_root.mkdir(parents=True, exist_ok=True)
+    augmentation_root = docker_runtime_root / "augmented_queries"
+    augmentation_root.mkdir(parents=True, exist_ok=True)
 
     work_to_paths = load_work_to_paths(
         json_path=args.input_json,
@@ -364,6 +446,36 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         for pair in selected_pairs
     ]
 
+    augmentation_records: list[AugmentationResult] = []
+    if args.enable_pitch_shift_augmentation:
+        token = _format_pitch_shift_token(args.pitch_shift_n_steps)
+        augmented_query_items: list[QueryItem] = []
+        for item in query_items:
+            out_name = f"{item.audio_path.stem}__pitch_shift_{token}.wav"
+            out_path = augmentation_root / out_name
+            apply_pitch_shift_augmentation(
+                input_audio=item.audio_path,
+                output_audio=out_path,
+                n_steps=args.pitch_shift_n_steps,
+            )
+            augmentation_records.append(
+                AugmentationResult(
+                    output_path=out_path,
+                    kind="pitch_shift",
+                    params={"n_steps": args.pitch_shift_n_steps},
+                )
+            )
+            augmented_query_items.append(
+                QueryItem(
+                    audio_path=out_path,
+                    work_id=item.work_id,
+                    song_id=f"{item.work_id}::query_pitch_shift",
+                    source="pitch_shift_query",
+                )
+            )
+
+        query_items = augmented_query_items
+
     # Retrieval labels are keyed by embedding stem, so stem collisions would corrupt evaluation.
     all_audio_paths = [item.audio_path for item in index_items + query_items]
     ensure_unique_stems(all_audio_paths)
@@ -392,7 +504,10 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         if missing_audio_paths:
             # The extractor consumes audio paths exactly as listed here; mounting those
             # audio locations into the container is the caller's responsibility.
-            write_path_list(missing_audio_paths, audio_list_path)
+            write_path_list(
+                [_path_for_extractor_container(p) for p in missing_audio_paths],
+                audio_list_path,
+            )
             print(
                 "Embeddings already present for "
                 f"{len(all_audio_paths) - len(missing_audio_paths)} files; extracting only "
@@ -497,12 +612,19 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         "seed": args.seed,
         "works_total_in_json": len(work_to_paths),
         "works_used": len(selected_pairs),
-        "augmentations_enabled": False,
+        "augmentations_enabled": args.enable_pitch_shift_augmentation,
         "augmentation_summary": {
-            "pitch_shift": 0,
+            "pitch_shift": len(augmentation_records),
             "time_stretch": 0,
             "reverb": 0,
-            "files": [],
+            "files": [
+                {
+                    "path": str(rec.output_path),
+                    "type": rec.kind,
+                    "params": rec.params,
+                }
+                for rec in augmentation_records
+            ],
         },
         "embedding_model": args.embedding_model,
         "embedding_dim": retrieval_config.embedding_dim,
@@ -582,6 +704,17 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["clews", "discogs-vinet"],
         required=True,
         help="Embedding model argument passed to extractor.",
+    )
+    parser.add_argument(
+        "--enable-pitch-shift-augmentation",
+        action="store_true",
+        help="If set, replace query audio with pitch-shifted versions before embedding extraction.",
+    )
+    parser.add_argument(
+        "--pitch-shift-n-steps",
+        type=float,
+        default=2.0,
+        help="Semitone shift used when --enable-pitch-shift-augmentation is enabled.",
     )
 
     parser.add_argument(
