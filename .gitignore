@@ -206,5 +206,11 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
-#User-added
-plans/
+
+# Ignore audio files
+*.wav
+*.mp3
+*.flac
+
+# Ignore .DS_Store files (macOS)
+.DS_Store

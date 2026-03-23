@@ -1,0 +1,50 @@
+services:
+  retrival:
+    build:
+      context: .
+      dockerfile: retrival/Dockerfile
+    container_name: retrival-service
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+      OMP_NUM_THREADS: "1"
+    working_dir: /app
+    volumes:
+      - ./retrival:/app/retrival
+      - ./extractor:/app/extractor
+      - "/Volumes/T7 Shield/discogs/:/data/discogs"
+    tty: true
+    stdin_open: true
+
+  clews:
+    build:
+      context: .
+      dockerfile: models/clews.Dockerfile
+    container_name: clews-model
+    environment:
+      OMP_NUM_THREADS: "1"
+    working_dir: /app
+    volumes:
+      - ./models/clews:/app
+      - ./extractor:/app/extractor
+      - "/Volumes/T7 Shield/discogs/:/data/discogs"
+    tty: true
+    stdin_open: true
+
+  discogs-vinet:
+    platform: linux/amd64
+    build:
+      context: .
+      dockerfile: models/discogs-vinet.Dockerfile
+    container_name: discogs-vinet-model
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+      OMP_NUM_THREADS: "1"
+    working_dir: /app
+    volumes:
+      - ./models/Discogs-VINet:/app
+      - ./extractor:/app/extractor
+      - "/Volumes/T7 Shield/discogs/:/data/discogs"
+    tty: true
+    stdin_open: true

@@ -1,3 +1,11 @@
 [submodule "eval/synesis"]
 	path = eval/synesis
 	url = https://github.com/arjunbahuguna/synesis
+[submodule "models/Discogs-VINet"]
+	path = models/Discogs-VINet
+	url = git@github.com:raraz15/Discogs-VINet.git
+	branch = main
+[submodule "models/clews"]
+	path = models/clews
+	url = https://github.com/sony/clews.git
+	branch = main
