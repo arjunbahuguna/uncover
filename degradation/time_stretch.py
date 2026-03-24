@@ -28,13 +28,22 @@ def _write_audio(path, y, sr):
 
 def _decode_input_to_temp_wav(input_path: str) -> tuple[tempfile.TemporaryDirectory, str]:
     """Decode arbitrary input media to a temporary WAV via ffmpeg."""
+    # Normalize path separators to forward slashes for cross-platform compatibility
+    clean_path = input_path.replace('\\', '/')
+
+    # Ensure the path is absolute by prepending a root slash if missing
+    # This assumes the data resides under the root directory; alternatively, use Path(clean_path).absolute()
+    if not clean_path.startswith('/'):
+        clean_path = '/' + clean_path.lstrip('/')
+
+    # Create a temporary directory with a specific prefix for time-stretch operations
     temp_dir = tempfile.TemporaryDirectory(prefix="time_stretch_")
     temp_wav = str(Path(temp_dir.name) / "decoded_input.wav")
     cmd = [
         "ffmpeg",
         "-y",
         "-i",
-        input_path,
+        clean_path,
         "-vn",
         "-acodec",
         "pcm_s16le",

@@ -60,22 +60,25 @@ def extract_embeddings_vinet_fast(file_paths, output_path, config_path, granular
 
         print("--- Transcoding complete! Loading VINet model for GPU extraction ---")
 
-        # Create a copy of the current environment variables and update PYTHONPATH
-        # to include the application directory, ensuring correct module resolution.
+        # Create a copy of the current environment variables and update PYTHONPATH.
+        # Core Fix 1: Add the absolute path of VINet to the environment variables
+        # to prevent import errors when inference.py executes.
         env = os.environ.copy()
-        env["PYTHONPATH"] = "/app:" + env.get("PYTHONPATH", "")
+        env["PYTHONPATH"] = "/app/models/Discogs-VINet:/app:" + env.get("PYTHONPATH", "")
 
         cmd = [
             "python",
-            "inference.py",
+            # Core Fix 2: Use the absolute path to precisely locate inference.py.
+            "/app/models/Discogs-VINet/inference.py",
             str(tmp_dir_path),
             config_path,
             str(output_path),
             f"--granularity={granularity}"
         ]
 
+
         # Execute the inference script with the updated environment and working directory.
-        result = subprocess.run(cmd, cwd="/app", env=env)
+        result = subprocess.run(cmd, cwd="/app/models/Discogs-VINet", env=env)
 
 
         if result.returncode != 0:
@@ -88,7 +91,7 @@ def main():
     parser.add_argument("--input", type=str, required=True,
                         help="Path to text file containing list of input audio files")
     parser.add_argument("--output-path", type=str, required=True, help="Directory path to save output embeddings")
-    parser.add_argument("--config", type=str, default="logs/checkpoints/Discogs-VINet-MIREX-full_set/config.yaml",
+    parser.add_argument("--config", type=str, default="/app/models/Discogs-VINet/logs/checkpoints/Discogs-VINet-MIREX-full_set/config.yaml",
                         help="Path to the model configuration file")
     args = parser.parse_args()
 

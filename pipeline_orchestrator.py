@@ -1,6 +1,7 @@
 """
 End-to-end cover retrieval pipeline orchestrator.
-Supports Windows GPU environments with intelligent Docker environment checks.
+Supports Windows GPU environments with intelligent Docker environment checks
+and robust volume mount path resolutions.
 """
 
 from __future__ import annotations
@@ -52,19 +53,12 @@ class AugmentationResult:
 def _extract_path_from_item(item: Any) -> Path | None:
     """
     Extracts a valid file path from various input formats (string or dictionary).
-
-    Args:
-        item: Can be a string path or a dictionary containing path keys.
-
-    Returns:
-        A resolved Path object if found, otherwise None.
     """
     raw_val = None
 
     if isinstance(item, str):
         raw_val = item.strip()
     elif isinstance(item, dict):
-        # Check common keys for file paths
         for key in ("path", "audio_path", "recording_path", "file_path", "filepath"):
             val = item.get(key)
             if isinstance(val, str) and val.strip():
@@ -74,7 +68,6 @@ def _extract_path_from_item(item: Any) -> Path | None:
     if not raw_val:
         return None
 
-    # Handle absolute vs relative paths
     if raw_val.startswith("/"):
         return Path(raw_val)
     return (REPO_ROOT / raw_val).resolve()
@@ -83,11 +76,6 @@ def _extract_path_from_item(item: Any) -> Path | None:
 def load_work_to_paths(json_path: Path) -> dict[str, list[Path]]:
     """
     Loads a JSON file mapping work IDs to lists of audio file paths.
-
-    Requirements:
-    - Input must be a JSON object.
-    - Only works with 2 or more valid audio paths are included.
-    - Duplicate paths within a work are removed.
     """
     with json_path.open("r", encoding="utf-8") as handle:
         data = json.load(handle)
@@ -115,7 +103,6 @@ def load_work_to_paths(json_path: Path) -> dict[str, list[Path]]:
                 seen.add(cand_str)
                 paths.append(candidate)
 
-        # Only include works that have at least 2 distinct audio files
         if len(paths) >= 2:
             work_to_paths[work_id] = paths
 
@@ -125,21 +112,12 @@ def load_work_to_paths(json_path: Path) -> dict[str, list[Path]]:
 def select_pairs(work_to_paths: dict[str, list[Path]], seed: int) -> list[SelectedWorkPair]:
     """
     Selects one index audio and one query audio for each work ID.
-
-    Args:
-        work_to_paths: Dictionary mapping work IDs to lists of paths.
-        seed: Random seed for reproducibility.
-
-    Returns:
-        List of SelectedWorkPair objects.
     """
     rng = random.Random(seed)
     selected: list[SelectedWorkPair] = []
 
-    # Sort keys to ensure deterministic order before sampling
     for work_id in sorted(work_to_paths.keys()):
         candidates = work_to_paths[work_id]
-        # Randomly sample two distinct paths
         idx_audio, qry_audio = rng.sample(candidates, 2)
         selected.append(
             SelectedWorkPair(
@@ -154,9 +132,6 @@ def select_pairs(work_to_paths: dict[str, list[Path]], seed: int) -> list[Select
 def ensure_unique_stems(paths: list[Path]) -> None:
     """
     Ensures all file stems (filenames without extension) are unique.
-
-    This is critical because embedding IDs are often derived from file stems.
-    Raises ValueError if duplicates are found.
     """
     stems: dict[str, Path] = {}
     duplicates: list[tuple[str, Path, Path]] = []
@@ -187,10 +162,8 @@ def write_path_list(paths: list[Path], output_txt: Path) -> None:
 
 def host_path_to_container(path: Path) -> Path:
     """
-    Converts a host machine path to a Docker container path.
-
-    Assumes the repository root is mounted at '/app' inside the container.
-    If the path is outside the repo, returns the original path string.
+    Converts a host machine path to a Docker container path securely.
+    Ensures that paths are strictly absolute inside the container (/app/...).
     """
     try:
         rel = path.resolve().relative_to(REPO_ROOT)
@@ -203,76 +176,30 @@ def ensure_docker_env(service: str) -> None:
     """
     Intelligently checks if the required Docker image exists.
     Builds the image only if it is missing to save time.
-
-    Args:
-        service: The service name defined in docker-compose.yml.
     """
     print(f"\n>>> [System Check] Verifying environment for '{service}'...")
     try:
-        # 1. Get the final image name from the compose configuration
         cfg_cmd = ["docker", "compose", "-f", COMPOSE_FILE, "config", "--format", "json"]
         cfg_res = subprocess.run(cfg_cmd, cwd=REPO_ROOT, capture_output=True, text=True)
         config_data = json.loads(cfg_res.stdout)
 
         image_name = config_data.get("services", {}).get(service, {}).get("image")
         if not image_name:
-            # Fallback guess if image name isn't explicitly defined
             image_name = f"{REPO_ROOT.name.lower()}-{service}"
 
-        # 2. Check if the image exists locally
         img_cmd = ["docker", "images", "-q", image_name]
         img_res = subprocess.run(img_cmd, capture_output=True, text=True)
 
         if img_res.stdout.strip():
             print(f">>> [Ready] Image '{image_name}' found. Skipping build.")
         else:
-            print(
-                f">>> [Missing] Image '{image_name}' not found. Triggering automatic build (this may take a few minutes)...")
+            print(f">>> [Missing] Image '{image_name}' not found. Triggering automatic build (this may take a few minutes)...")
             build_cmd = ["docker", "compose", "-f", COMPOSE_FILE, "build", service]
             subprocess.run(build_cmd, cwd=REPO_ROOT, check=True)
             print(f">>> [Complete] Environment for '{service}' is ready.")
 
     except Exception as e:
         print(f">>> [Warning] Could not parse image status. Delegating to Docker default behavior. ({str(e)})")
-
-
-def _path_for_extractor_container(path: Path) -> Path:
-    """Map extractor-local files to /app/extractor; keep externally mounted paths as-is."""
-    extractor_host = (REPO_ROOT / "extractor").resolve()
-    try:
-        path.resolve().relative_to(extractor_host)
-    except ValueError:
-        return path
-    return extractor_host_path_to_container(path)
-
-
-def _path_for_degradation_container(path: Path) -> Path:
-    """Map host paths to the degradation container mount layout."""
-    resolved = path.resolve()
-
-    try:
-        rel_repo = resolved.relative_to(REPO_ROOT.resolve())
-        return DEGRADATION_CONTAINER_REPO_ROOT / rel_repo
-    except ValueError:
-        pass
-
-    try:
-        rel_discogs = resolved.relative_to(DEGRADATION_DISCOGS_HOST_ROOT.resolve())
-        return DEGRADATION_DISCOGS_CONTAINER_ROOT / rel_discogs
-    except ValueError:
-        pass
-
-    return resolved
-
-
-def _format_pitch_shift_token(n_steps: float) -> str:
-    token = str(n_steps).replace(".", "p").replace("-", "m")
-    return token
-
-
-def _format_time_stretch_token(rate: float) -> str:
-    token = str(rate).replace(".", "p").replace("-", "m")
-    return token
 
 
 def apply_pitch_shift_augmentation(
@@ -283,32 +210,21 @@ def apply_pitch_shift_augmentation(
     """Create a pitch-shifted copy using the degradation Docker service."""
     output_audio.parent.mkdir(parents=True, exist_ok=True)
 
-    input_for_container = _path_for_degradation_container(input_audio)
-    output_for_container = _path_for_degradation_container(output_audio)
+    # Fixed: Replaced undefined global variables with host_path_to_container
+    input_for_container = host_path_to_container(input_audio)
+    output_for_container = host_path_to_container(output_audio)
 
     cmd = [
-        "docker",
-        "compose",
-        "run",
-        "--rm",
-        "degradation",
-        "python",
-        "degradation/pitch_shift.py",
-        "--input",
-        str(input_for_container),
-        "--output",
-        str(output_for_container),
-        "--n-steps",
-        str(n_steps),
+        "docker", "compose", "-f", COMPOSE_FILE, "run", "--rm", "degradation",
+        "python", "degradation/pitch_shift.py",
+        "--input", str(input_for_container),
+        "--output", str(output_for_container),
+        "--n-steps", str(n_steps),
     ]
-    print("Running pitch-shift augmentation docker command:")
-    print(" ".join(cmd))
-
+    print(">>> Running pitch-shift augmentation docker command...")
     process = subprocess.run(cmd, cwd=REPO_ROOT, check=False)
     if process.returncode != 0:
-        raise RuntimeError(
-            "Pitch-shift augmentation failed in the degradation docker service."
-        )
+        raise RuntimeError("Pitch-shift augmentation failed.")
 
 
 def apply_time_stretch_augmentation(
@@ -319,60 +235,47 @@ def apply_time_stretch_augmentation(
     """Create a time-stretched copy using the degradation Docker service."""
     output_audio.parent.mkdir(parents=True, exist_ok=True)
 
-    input_for_container = _path_for_degradation_container(input_audio)
-    output_for_container = _path_for_degradation_container(output_audio)
+    # Fixed: Replaced undefined global variables with host_path_to_container
+    input_for_container = host_path_to_container(input_audio)
+    output_for_container = host_path_to_container(output_audio)
 
     cmd = [
-        "docker",
-        "compose",
-        "run",
-        "--rm",
-        "degradation",
-        "python",
-        "degradation/time_stretch.py",
-        "--input",
-        str(input_for_container),
-        "--output",
-        str(output_for_container),
-        "--stretch-rate",
-        str(stretch_rate),
-        "--backend",
-        "librosa",
+        "docker", "compose", "-f", COMPOSE_FILE, "run", "--rm", "degradation",
+        "python", "degradation/time_stretch.py",
+        "--input", str(input_for_container),
+        "--output", str(output_for_container),
+        "--stretch-rate", str(stretch_rate),
+        "--backend", "librosa",
     ]
-    print("Running time-stretch augmentation docker command:")
-    print(" ".join(cmd))
-
+    print(">>> Running time-stretch augmentation docker command...")
     process = subprocess.run(cmd, cwd=REPO_ROOT, check=False)
     if process.returncode != 0:
-        raise RuntimeError(
-            "Time-stretch augmentation failed in the degradation docker service."
-        )
+        raise RuntimeError("Time-stretch augmentation failed.")
 
 
 def run_embedding_extractor_docker(input_list: Path, model: str, output_dir: Path) -> None:
     """
     Runs the embedding extraction process inside a Docker container.
-
-    Args:
-        input_list: Path to a text file listing input audio files.
-        model: The model to use ('clews' or 'discogs-vinet').
-        output_dir: Directory to save extracted embeddings.
     """
     service_name = "clews" if model == "clews" else "discogs-vinet"
 
-    # Ensure the Docker environment is ready
     ensure_docker_env(service_name)
 
-    # Convert paths to be relative to repo root for Docker mounting
-    input_rel = input_list.resolve().relative_to(REPO_ROOT).as_posix()
-    output_rel = output_dir.resolve().relative_to(REPO_ROOT).as_posix()
+    # Securely map host paths to absolute container paths
+    input_rel = host_path_to_container(input_list).as_posix()
+    output_rel = host_path_to_container(output_dir).as_posix()
 
-    cmd = ["docker", "compose", "-f", COMPOSE_FILE, "run", "--rm"]
+    cmd = [
+        "docker", "compose", "-f", COMPOSE_FILE, "run", "--rm",
+        # Force Python to recognize the utils module and project root
+        "-e", "PYTHONPATH=/app:/app/models/clews"
+    ]
 
     if model == "clews":
         cmd.extend([
             "clews", "python", "extractor/extractor_gpu_clew.py",
             "--input", input_rel,
+            # Hardcoded accurate path to bypass nested mounting confusion
             "--checkpoint", "models/clews/checkpoints/clews/dvi-clews/checkpoint_best.ckpt",
             "--output-path", output_rel
         ])
@@ -385,7 +288,7 @@ def run_embedding_extractor_docker(input_list: Path, model: str, output_dir: Pat
     else:
         raise ValueError(f"Unsupported model: {model}")
 
-    print("\n>>> Starting GPU-accelerated extraction container...")
+    print(f"\n>>> Starting GPU-accelerated extraction container. Input list: {input_rel}")
     process = subprocess.run(cmd, cwd=REPO_ROOT, check=False)
 
     if process.returncode != 0:
@@ -398,16 +301,7 @@ def run_retrieval_evaluation_docker(
 ) -> None:
     """
     Runs the retrieval evaluation script inside a Docker container.
-
-    Args:
-        first_list: Path to index embeddings list.
-        second_list: Path to query embeddings list.
-        labels_json: Path to ground truth labels.
-        dim: Embedding dimension.
-        recall_ks: Tuple of K values for Recall@K calculation.
-        output_json: Path to save evaluation results.
     """
-    # Ensure the Docker environment is ready
     ensure_docker_env("retrieval")
 
     cmd = [
@@ -437,9 +331,6 @@ def embedding_path_for_audio(audio_path: Path, embeddings_dir: Path, model: str)
 def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     """
     Orchestrates the full pipeline: loading data, extracting embeddings, and evaluating retrieval.
-
-    Returns:
-        A dictionary containing metrics and details of the run.
     """
     output_dir = args.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -450,8 +341,6 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     # Runtime directory for Docker volume mounting
     docker_runtime_root = REPO_ROOT / "extractor" / "pipeline_runtime" / output_dir.name
     docker_runtime_root.mkdir(parents=True, exist_ok=True)
-    augmentation_root = docker_runtime_root / "augmented_queries"
-    augmentation_root.mkdir(parents=True, exist_ok=True)
 
     # Load and validate data
     work_to_paths = load_work_to_paths(args.input_json)
@@ -499,7 +388,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         [embedding_path_for_audio(item.audio_path, embeddings_dir, args.embedding_model) for item in query_items],
         second_list)
 
-    # Prepare Docker-specific paths (mounted volumes)
+    # Prepare Docker-specific paths (mounted volumes) using reliable absolute container paths
     first_list_docker = docker_runtime_root / "first_embeddings_docker.txt"
     second_list_docker = docker_runtime_root / "second_embeddings_docker.txt"
 

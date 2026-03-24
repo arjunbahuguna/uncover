@@ -1,0 +1,22 @@
+{
+  "C-0147872": [
+    {
+      "version_id": "V-1268764",
+      "path": "/data/discogs/discogs-test-subset/yh5I6P2fWgI.mp4"
+    },
+    {
+      "version_id": "V-1268768",
+      "path": "/data/discogs/discogs-test-subset/VvyjyPFUiK8.mp4"
+    }
+  ],
+  "C-0061627": [
+    {
+      "version_id": "V-0621683",
+      "path": "/data/discogs/discogs-test-subset/7g9umwXwKNg.mp4"
+    },
+    {
+      "version_id": "V-0621664",
+      "path": "/data/discogs/discogs-test-subset/P8GhrrNQp58.mp4"
+    }
+  ]
+}

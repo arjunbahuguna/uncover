@@ -59,3 +59,16 @@ services:
               capabilities: [gpu]
     tty: true
     stdin_open: true
+
+
+  degradation:
+    build:
+      context: .
+      dockerfile: degradation/Dockerfile
+    container_name: degradation-service
+    working_dir: /app
+    volumes:
+      - .:/app
+      - "E:/Master/Master_Util/datasets_cover/discogs:/data/discogs"
+    tty: true
+    stdin_open: true
