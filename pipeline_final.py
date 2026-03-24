@@ -27,8 +27,36 @@ DATASET_CONTAINER_ROOT = Path("/data/discogs")
 PathLike = str | Path
 REPO_ROOT = Path(__file__).resolve().parent
 COMPOSE_FILE = "docker-compose.windows-gpu.yml"
-CONFIG_FILE = "config_test.json"
+CONFIG_FILE = "config_final.json"
+import sys
+import datetime
 
+class DualLogger:
+    """
+    Redirects print output to both the terminal and a log file simultaneously.
+    """
+
+    def __init__(self, filename):
+        self.terminal = sys.stdout
+        # Open the log file in append mode with UTF-8 encoding to support special characters.
+        self.log = open(filename, "a", encoding="utf-8")
+
+        # Write a separator line containing the experiment start timestamp.
+        start_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.log.write(f"\n{'=' * 50}\n[Experiment Started At: {start_time}]\n{'=' * 50}\n")
+        self.log.flush()
+
+    def write(self, message):
+        # Write the message to both the terminal and the log file.
+        self.terminal.write(message)
+        self.log.write(message)
+        # Force an immediate flush to ensure data is written to disk, preventing loss in case of a crash.
+        self.log.flush()
+
+    def flush(self):
+        # Flush both the terminal and the log file buffers.
+        self.terminal.flush()
+        self.log.flush()
 
 @dataclass
 class SelectedWorkPair:
@@ -429,31 +457,67 @@ def run_single_experiment(config: dict, model_cfg: dict, ts_rate: float, selecte
         else:
             print("\n>>> All audio embeddings already exist. Skipping GPU extraction.")
 
-    # Generate lists of embedding paths for evaluation
+    # ================= Start Replacement =================
+
+    # 1. Perform strict pairing check: Identify survivors that have actually generated feature files on disk.
+    valid_index_items = []
+    valid_query_items = []
+
+    for idx_item, qry_item in zip(index_items, query_items):
+        idx_emb_path = embedding_path_for_audio(idx_item.audio_path, embeddings_dir, model_name)
+        qry_emb_path = embedding_path_for_audio(qry_item.audio_path, embeddings_dir, model_name)
+
+        # Only allow entries into the evaluation phase if both original and speed-varied features exist.
+        if idx_emb_path.exists() and qry_emb_path.exists():
+            valid_index_items.append(idx_item)
+            valid_query_items.append(qry_item)
+        else:
+            print(
+                f"[Skip Evaluation] Features missing, removed from evaluation list: {idx_item.work_id}"
+            )
+
+    # 2. Generate local evaluation lists (using only valid items).
     first_list = exp_dir / "first_embeddings.txt"
     second_list = exp_dir / "second_embeddings.txt"
+    write_path_list(
+        [embedding_path_for_audio(item.audio_path, embeddings_dir, model_name) for item in valid_index_items],
+        first_list
+    )
+    write_path_list(
+        [embedding_path_for_audio(item.audio_path, embeddings_dir, model_name) for item in valid_query_items],
+        second_list
+    )
 
-    write_path_list([embedding_path_for_audio(item.audio_path, embeddings_dir, model_name) for item in index_items],
-                    first_list)
-    write_path_list([embedding_path_for_audio(item.audio_path, embeddings_dir, model_name) for item in query_items],
-                    second_list)
-
-    # Generate Docker-compatible lists
+    # 3. Generate Docker-compatible evaluation lists (using only valid items).
     first_list_docker = docker_runtime_root / "first_embeddings_docker.txt"
     second_list_docker = docker_runtime_root / "second_embeddings_docker.txt"
+    write_path_list(
+        [host_path_to_container(embedding_path_for_audio(item.audio_path, embeddings_dir, model_name)) for item in
+         valid_index_items],
+        first_list_docker
+    )
+    write_path_list(
+        [host_path_to_container(embedding_path_for_audio(item.audio_path, embeddings_dir, model_name)) for item in
+         valid_query_items],
+        second_list_docker
+    )
 
-    write_path_list([host_path_to_container(p) for p in
-                     [embedding_path_for_audio(item.audio_path, embeddings_dir, model_name) for item in index_items]],
-                    first_list_docker)
-    write_path_list([host_path_to_container(p) for p in
-                     [embedding_path_for_audio(item.audio_path, embeddings_dir, model_name) for item in query_items]],
-                    second_list_docker)
-
-    # Generate labels JSON
+    # 4. Generate labels JSON (using only valid items).
     labels_json = exp_dir / "embedding_labels.json"
     with labels_json.open("w", encoding="utf-8") as f:
-        json.dump({item.audio_path.stem: {"work_id": item.work_id, "song_id": item.song_id} for item in
-                   index_items + query_items}, f, indent=2)
+        # Build a label dictionary for the surviving items.
+        valid_labels = {
+            item.audio_path.stem: {"work_id": item.work_id, "song_id": item.song_id}
+            for item in valid_index_items + valid_query_items
+        }
+        json.dump(valid_labels, f, indent=2)
+
+    # Print filtering statistics for verification.
+    print(
+        f"   -> Evaluation list filtering complete: Original {len(index_items)} pairs, {len(valid_index_items)} valid pairs retained."
+    )
+
+    # ================= End Replacement =================
 
     # Run evaluation
     eval_results_json = exp_dir / "eval_results.json"
@@ -486,6 +550,10 @@ def run_single_experiment(config: dict, model_cfg: dict, ts_rate: float, selecte
 
 
 def main():
+    sys.stdout = DualLogger("ablation_run_test.log")
+
+    with open(REPO_ROOT / CONFIG_FILE, "r") as f:
+        config = json.load(f)
     """Main entry point for the orchestration pipeline."""
     config_path = REPO_ROOT / CONFIG_FILE
 
