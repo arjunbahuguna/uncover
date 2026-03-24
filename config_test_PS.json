@@ -1,0 +1,19 @@
+{
+  "experiment_name": "ablation_pitch_shift_only",
+  "input_json": "dataset_filter.json",
+  "output_base_dir": "results",
+  "seed": 42,
+  "pitch_shift_steps": [0, -2, -1, 1, 2],
+  "models": [
+    {
+      "name": "clews",
+      "dim": 1024
+    },
+    {
+      "name": "discogs-vinet",
+      "dim": 1024
+    }
+  ],
+  "recall_ks": [1, 5, 10,50,100],
+  "skip_embedding_extraction": false
+}

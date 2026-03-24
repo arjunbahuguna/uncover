@@ -1,0 +1,19 @@
+{
+  "experiment_name": "final_ablation",
+  "input_json": "input-pairs.json",
+  "output_base_dir": "pipeline_runs_final",
+  "seed": 42,
+  "skip_embedding_extraction": false,
+  "recall_ks": [1, 5, 10, 50, 100],
+  "models": [
+    {
+      "name": "clews",
+      "dim": 1024
+    },
+    {
+      "name": "discogs-vinet",
+      "dim": 1024
+    }
+  ],
+  "time_stretch_rates": [1.0,0.5,0.8,1.2,1.5,2]
+}0.5,
