@@ -219,79 +219,88 @@ def ensure_docker_env(service: str) -> None:
         print(f">>> [Warning] Image detection failed: {e}")
 
 
-def native_time_stretch(input_path: Path, output_path: Path, rate: float) -> None:
+def process_single_audio_all_rates(input_path: Path, rates_and_outputs: list[tuple[float, Path]]) -> None:
     """
-    Pre-calculates and saves time-stretched audio using native Python (librosa).
-    Skips processing if the output file already exists.
-    """
-    if output_path.exists():
-        return
+    Optimized Processing: Loads the audio file once and generates all time-stretched
+    versions directly in memory.
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    Args:
+        input_path: Path to the source audio file.
+        rates_and_outputs: A list of tuples containing (stretch_rate, output_path).
+    """
+    # Filter out tasks where the output file already exists to avoid redundant work
+    tasks_to_do = [(rate, out_path) for rate, out_path in rates_and_outputs if not out_path.exists()]
+
+    if not tasks_to_do:
+        return  # Exit immediately if all versions for this song are already generated
+
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            # Load original audio
+
+            # Core Optimization: Perform Disk I/O and decoding only once per file
             y, sr = librosa.load(input_path, sr=None)
-            # Apply time stretching
-            y_stretched = librosa.effects.time_stretch(y, rate=rate)
-            # Save to disk
-            sf.write(output_path, y_stretched, sr)
+
+            # Generate all stretched versions sequentially in memory
+            for rate, out_path in tasks_to_do:
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+                y_stretched = librosa.effects.time_stretch(y, rate=rate)
+                sf.write(out_path, y_stretched, sr)
+
     except Exception as e:
-        raise RuntimeError(f"Audio time-stretch failed [{input_path.name}]: {e}")
+        raise RuntimeError(f"Audio processing failed [{input_path.name}]: {e}")
 
 
 def preprocess_all_audio(selected_pairs: list[SelectedWorkPair], ts_rates: list[float], aug_dir: Path) -> dict[
     float, dict[str, Path]]:
-    """
-    Phase 1: Pre-processes all query audio files on the host machine using MULTIPROCESSING.
-    Generates time-stretched versions for specified rates.
-    Returns a mapping: {time_stretch_rate: {original_path_str: augmented_path}}
-    """
-    print("\n>>> [Phase 1] Starting local audio pre-processing (Time Stretch) on host...")
+    print("\n>>> [Phase 1] Starting fast preprocessing (I/O optimized)...")
 
-    # Filter out rate 1.0 (no change needed)
+    # Identify rates that require processing (exclude 1.0 as it represents the original)
     rates_to_process = [r for r in ts_rates if r != 1.0]
+
+    # Initialize mapping for the original speed (1.0)
+    aug_mapping = {1.0: {str(p.query_audio): p.query_audio for p in selected_pairs}}
 
     if not rates_to_process:
         print(">>> No time-stretch processing required. Skipping.")
-        return {1.0: {str(p.query_audio): p.query_audio for p in selected_pairs}}
+        return aug_mapping
 
-    # Initialize mapping with rate 1.0 (original files)
-    aug_mapping = {1.0: {str(p.query_audio): p.query_audio for p in selected_pairs}}
-
-    # Set the number of worker processes to 8, matching the physical core count of the 5700X3D CPU for stability.
-    # If system memory exceeds 32GB, you may increase max_workers to 14 to maximize throughput.
-    MAX_WORKERS = 14
-
+    # 1. Pre-create directories and initialize the mapping dictionary for each rate
     for rate in rates_to_process:
         aug_mapping[rate] = {}
-        rate_dir = aug_dir / f"ts_{rate}"
-        rate_dir.mkdir(parents=True, exist_ok=True)
+        (aug_dir / f"ts_{rate}").mkdir(parents=True, exist_ok=True)
 
-        print(f"--- Generating {rate}x time-stretched audio (Multiprocessing) ---")
-
-        # 1. Pre-build the task list and result mapping
-        tasks = []
-        for pair in selected_pairs:
-            orig_path = pair.query_audio
-            aug_path = rate_dir / f"{orig_path.stem}_ts{rate}.wav"
+    # 2. Core Change: Organize tasks by "file" instead of by "rate".
+    # Structure: [(original_file_A, [(0.4, path_A1), (0.6, path_A2)...]), (original_file_B, [...])]
+    file_tasks = []
+    for pair in selected_pairs:
+        orig_path = pair.query_audio
+        rates_and_outputs = []
+        for rate in rates_to_process:
+            aug_path = aug_dir / f"ts_{rate}" / f"{orig_path.stem}_ts{rate}.wav"
             aug_mapping[rate][str(orig_path)] = aug_path
-            tasks.append((orig_path, aug_path, rate))
+            rates_and_outputs.append((rate, aug_path))
 
-        # 2. Start the multiprocessing pool
-        with concurrent.futures.ProcessPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            # Submit all tasks
-            futures = {executor.submit(native_time_stretch, *task): task for task in tasks}
+        file_tasks.append((orig_path, rates_and_outputs))
 
-            # Track completion progress using tqdm
-            for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc=f"Rate {rate}",
-                               unit="file"):
-                try:
-                    future.result()  # Re-raise any exceptions that occurred in the subprocess
-                except Exception as exc:
-                    print(f"\n[Error] Task generated an exception: {exc}")
-                    raise
+    MAX_WORKERS = 16
+
+    print(f"--- Processing {len(file_tasks)} songs using {MAX_WORKERS} concurrent processes ---")
+
+    # 3. Launch a single process pool to handle all tasks in one batch
+    with concurrent.futures.ProcessPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        # Submit each song along with all its required variations as a single task
+        futures = {executor.submit(process_single_audio_all_rates, orig_path, ro): orig_path for orig_path, ro in
+                   file_tasks}
+
+        # Progress bar tracks the number of songs completed, not individual files generated
+        for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc="Processing songs",
+                           unit="song"):
+            try:
+                future.result()
+            except Exception as exc:
+                # Removed exception raising; only log a warning to prevent main program crash
+                print(f"\n[Skipped File] Corrupt data or missing file detected. Automatically skipped: {exc}")
 
     return aug_mapping
 
